@@ -2,6 +2,7 @@
 
 pub mod manager;
 pub mod manager_v2;
+pub mod manager_enhanced;
 pub mod retriever;
 pub mod ranker;
 pub mod models;
@@ -10,6 +11,7 @@ pub mod background;
 
 pub use manager::HiRAGManager;
 pub use manager_v2::HiRAGManagerV2;
+pub use manager_enhanced::EnhancedHiRAGManager;
 pub use models::{Context, ContextRequest, ContextResponse, Priority};
 pub use ranker::ContextRanker;
 pub use token_estimator::TokenEstimator;

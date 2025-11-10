@@ -16,6 +16,12 @@ pub struct Config {
     pub protocol: ProtocolConfig,
     pub logging: LoggingConfig,
     pub server: ServerConfig,
+    #[serde(default)]
+    pub token_budget: Option<TokenBudgetConfig>,
+    #[serde(default)]
+    pub vision: Option<VisionConfig>,
+    #[serde(default)]
+    pub facts: Option<FactsConfig>,
 }
 
 /// Configuration for the embedding service
@@ -444,3 +450,126 @@ where
     let opt = Option::<String>::deserialize(deserializer)?;
     Ok(opt.map(Secret::new))
 }
+
+/// Token budget configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenBudgetConfig {
+    /// System/Instructions tokens
+    #[serde(default = "default_system_tokens")]
+    pub system_tokens: usize,
+    
+    /// Running brief tokens
+    #[serde(default = "default_running_brief")]
+    pub running_brief: usize,
+    
+    /// Recent turns tokens
+    #[serde(default = "default_recent_turns")]
+    pub recent_turns: usize,
+    
+    /// Retrieved context tokens
+    #[serde(default = "default_retrieved_context")]
+    pub retrieved_context: usize,
+    
+    /// Completion tokens
+    #[serde(default = "default_completion")]
+    pub completion: usize,
+    
+    /// Maximum total tokens per turn
+    #[serde(default = "default_max_total")]
+    pub max_total: usize,
+}
+
+impl Default for TokenBudgetConfig {
+    fn default() -> Self {
+        Self {
+            system_tokens: default_system_tokens(),
+            running_brief: default_running_brief(),
+            recent_turns: default_recent_turns(),
+            retrieved_context: default_retrieved_context(),
+            completion: default_completion(),
+            max_total: default_max_total(),
+        }
+    }
+}
+
+/// Vision API configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisionConfig {
+    /// DeepSeek service URL
+    #[serde(default = "default_vision_service_url")]
+    pub service_url: String,
+    
+    /// Request timeout in milliseconds
+    #[serde(default = "default_vision_timeout_ms")]
+    pub timeout_ms: u64,
+    
+    /// Maximum regions per decode request
+    #[serde(default = "default_max_regions_per_request")]
+    pub max_regions_per_request: usize,
+    
+    /// Default fidelity level
+    #[serde(default = "default_fidelity")]
+    pub default_fidelity: String,
+}
+
+impl Default for VisionConfig {
+    fn default() -> Self {
+        Self {
+            service_url: default_vision_service_url(),
+            timeout_ms: default_vision_timeout_ms(),
+            max_regions_per_request: default_max_regions_per_request(),
+            default_fidelity: default_fidelity(),
+        }
+    }
+}
+
+/// Facts store configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactsConfig {
+    /// Qdrant collection name for facts
+    #[serde(default = "default_facts_collection_name")]
+    pub collection_name: String,
+    
+    /// Enable hash-based deduplication
+    #[serde(default = "default_dedup_enabled")]
+    pub dedup_enabled: bool,
+    
+    /// Minimum confidence threshold for fact insertion
+    #[serde(default = "default_confidence_threshold")]
+    pub confidence_threshold: f32,
+    
+    /// Maximum facts returned per query
+    #[serde(default = "default_max_facts_per_query")]
+    pub max_facts_per_query: usize,
+}
+
+impl Default for FactsConfig {
+    fn default() -> Self {
+        Self {
+            collection_name: default_facts_collection_name(),
+            dedup_enabled: default_dedup_enabled(),
+            confidence_threshold: default_confidence_threshold(),
+            max_facts_per_query: default_max_facts_per_query(),
+        }
+    }
+}
+
+// Default functions for TokenBudgetConfig
+fn default_system_tokens() -> usize { 700 }
+fn default_running_brief() -> usize { 1200 }
+fn default_recent_turns() -> usize { 450 }
+fn default_retrieved_context() -> usize { 3750 }
+fn default_completion() -> usize { 1000 }
+fn default_max_total() -> usize { 8000 }
+
+// Default functions for VisionConfig
+fn default_vision_service_url() -> String { "http://localhost:8080".to_string() }
+fn default_vision_timeout_ms() -> u64 { 5000 }
+fn default_max_regions_per_request() -> usize { 16 }
+fn default_fidelity() -> String { "10x".to_string() }
+
+// Default functions for FactsConfig
+fn default_facts_collection_name() -> String { "facts".to_string() }
+fn default_dedup_enabled() -> bool { true }
+fn default_confidence_threshold() -> f32 { 0.8 }
+fn default_max_facts_per_query() -> usize { 100 }
