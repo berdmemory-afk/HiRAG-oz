@@ -99,8 +99,13 @@ pub struct TokenBudgetManager {
 }
 
 impl TokenBudgetManager {
+    /// Create a new token budget manager (back-compat: defaults to tiktoken)
+    pub fn new(config: TokenBudgetConfig) -> Result<Self, BudgetError> {
+        Self::with_tiktoken(config)
+    }
+
     /// Create a new token budget manager with custom estimator
-    pub fn new(config: TokenBudgetConfig, estimator: Arc<dyn TokenEstimator>) -> Result<Self, BudgetError> {
+    pub fn new_with_estimator(config: TokenBudgetConfig, estimator: Arc<dyn TokenEstimator>) -> Result<Self, BudgetError> {
         config.validate()?;
         Ok(Self { config, estimator })
     }

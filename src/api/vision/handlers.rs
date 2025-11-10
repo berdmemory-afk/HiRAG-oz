@@ -26,13 +26,12 @@ pub async fn search_regions(
     Json(request): Json<VisionSearchRequest>,
 ) -> Result<Json<VisionSearchResponse>, (StatusCode, Json<ApiError>)> {
     let start = Instant::now();
-    METRICS.vision_search_requests.inc();
     
     info!("Vision search request: query={}", request.query);
 
     // Validate request
     if request.query.is_empty() {
-        METRICS.vision_search_errors.inc();
+        METRICS.record_vision_search(false);
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -43,7 +42,7 @@ pub async fn search_regions(
     }
 
     if request.top_k > 50 {
-        METRICS.vision_search_errors.inc();
+        METRICS.record_vision_search(false);
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -54,22 +53,26 @@ pub async fn search_regions(
     }
 
     // Call vision service
-    let result = match state.client.search_regions(request).await {
+    match state.client.search_regions(request).await {
         Ok(response) => {
-            METRICS.vision_search_duration.observe(start.elapsed().as_secs_f64());
+            METRICS.record_vision_search(true);
+            METRICS.vision_request_duration
+                .with_label_values(&["search"])
+                .observe(start.elapsed().as_secs_f64());
             Ok(Json(response))
         }
         Err(e) => {
-            METRICS.vision_search_errors.inc();
+            METRICS.record_vision_search(false);
+            METRICS.vision_request_duration
+                .with_label_values(&["search"])
+                .observe(start.elapsed().as_secs_f64());
             error!("Vision search failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiError::new(error_codes::INTERNAL_ERROR, e.to_string())),
             ))
         }
-    };
-    
-    result
+    }
 }
 
 /// Decode regions to text
@@ -80,13 +83,12 @@ pub async fn decode_regions(
     Json(request): Json<DecodeRequest>,
 ) -> Result<Json<DecodeResponse>, (StatusCode, Json<ApiError>)> {
     let start = Instant::now();
-    METRICS.vision_decode_requests.inc();
     
     info!("Vision decode request: {} regions", request.region_ids.len());
 
     // Validate request
     if request.region_ids.is_empty() {
-        METRICS.vision_decode_errors.inc();
+        METRICS.record_vision_decode(false);
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -97,7 +99,7 @@ pub async fn decode_regions(
     }
 
     if request.region_ids.len() > 16 {
-        METRICS.vision_decode_errors.inc();
+        METRICS.record_vision_decode(false);
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -113,22 +115,26 @@ pub async fn decode_regions(
     // }
 
     // Call vision service
-    let result = match state.client.decode_regions(request).await {
+    match state.client.decode_regions(request).await {
         Ok(response) => {
-            METRICS.vision_decode_duration.observe(start.elapsed().as_secs_f64());
+            METRICS.record_vision_decode(true);
+            METRICS.vision_request_duration
+                .with_label_values(&["decode"])
+                .observe(start.elapsed().as_secs_f64());
             Ok(Json(response))
         }
         Err(e) => {
-            METRICS.vision_decode_errors.inc();
+            METRICS.record_vision_decode(false);
+            METRICS.vision_request_duration
+                .with_label_values(&["decode"])
+                .observe(start.elapsed().as_secs_f64());
             error!("Vision decode failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiError::new(error_codes::INTERNAL_ERROR, e.to_string())),
             ))
         }
-    };
-    
-    result
+    }
 }
 
 /// Index a document
@@ -139,13 +145,12 @@ pub async fn index_document(
     Json(request): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, (StatusCode, Json<ApiError>)> {
     let start = Instant::now();
-    METRICS.vision_index_requests.inc();
     
     info!("Vision index request: doc_url={}", request.doc_url);
 
     // Validate request
     if request.doc_url.is_empty() {
-        METRICS.vision_index_errors.inc();
+        METRICS.record_vision_index(false);
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -156,22 +161,26 @@ pub async fn index_document(
     }
 
     // Call vision service
-    let result = match state.client.index_document(request).await {
+    match state.client.index_document(request).await {
         Ok(response) => {
-            METRICS.vision_index_duration.observe(start.elapsed().as_secs_f64());
+            METRICS.record_vision_index(true);
+            METRICS.vision_request_duration
+                .with_label_values(&["index"])
+                .observe(start.elapsed().as_secs_f64());
             Ok(Json(response))
         }
         Err(e) => {
-            METRICS.vision_index_errors.inc();
+            METRICS.record_vision_index(false);
+            METRICS.vision_request_duration
+                .with_label_values(&["index"])
+                .observe(start.elapsed().as_secs_f64());
             error!("Vision index failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiError::new(error_codes::INTERNAL_ERROR, e.to_string())),
             ))
         }
-    };
-    
-    result
+    }
 }
 
 /// Get job status

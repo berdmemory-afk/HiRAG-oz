@@ -185,6 +185,12 @@ impl Metrics {
         self.vision_decode_requests.with_label_values(&[status]).inc();
     }
     
+    /// Record a vision index request
+    pub fn record_vision_index(&self, success: bool) {
+        let status = if success { "success" } else { "error" };
+        self.vision_index_requests.with_label_values(&[status]).inc();
+    }
+    
     /// Record a facts insert request
     pub fn record_facts_insert(&self, success: bool, duplicate: bool) {
         let status = if success { "success" } else { "error" };
@@ -228,7 +234,7 @@ impl Metrics {
         use prometheus::Encoder;
         
         let encoder = prometheus::TextEncoder::new();
-        let metric_families = prometheus::gather();
+        let metric_families = self.registry.gather(); // Use self.registry instead of default
         
         let mut buffer = Vec::new();
         encoder.encode(&metric_families, &mut buffer).unwrap_or_default();

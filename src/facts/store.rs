@@ -103,7 +103,6 @@ impl FactStore {
     /// Insert a fact
     pub async fn insert_fact(&self, request: FactInsertRequest) -> Result<FactInsertResponse> {
         let start = Instant::now();
-        METRICS.facts_insert_requests.inc();
         
         let fact = Fact::new(
             request.subject,
@@ -118,7 +117,10 @@ impl FactStore {
         // Check for duplicates if enabled
         if self.config.dedup_enabled {
             if let Some(existing) = self.check_duplicate(&fact.hash).await? {
-                METRICS.facts_duplicates.inc();
+                METRICS.record_facts_insert(true, true); // success=true, duplicate=true
+                METRICS.facts_request_duration
+                    .with_label_values(&["insert"])
+                    .observe(start.elapsed().as_secs_f64());
                 warn!("Duplicate fact detected: hash={}", fact.hash);
                 return Ok(FactInsertResponse {
                     fact_id: existing,
@@ -186,7 +188,10 @@ impl FactStore {
             .map_err(|e| ContextError::Internal(format!("Failed to insert fact: {}", e)))?;
 
         info!("Fact inserted successfully: id={}", fact.id);
-        METRICS.facts_insert_duration.observe(start.elapsed().as_secs_f64());
+        METRICS.record_facts_insert(true, false); // success=true, duplicate=false
+        METRICS.facts_request_duration
+            .with_label_values(&amp;["insert"])
+            .observe(start.elapsed().as_secs_f64());
 
         Ok(FactInsertResponse {
             fact_id: fact.id,
@@ -241,7 +246,6 @@ impl FactStore {
     /// Query facts
     pub async fn query_facts(&self, query: FactQuery) -> Result<FactQueryResponse> {
         let start = Instant::now();
-        METRICS.facts_query_requests.inc();
         
         debug!("Querying facts: {:?}", query);
 
@@ -358,7 +362,10 @@ impl FactStore {
         let total = facts.len();
 
         info!("Query returned {} facts", total);
-        METRICS.facts_query_duration.observe(start.elapsed().as_secs_f64());
+        METRICS.record_facts_query(true); // success=true
+        METRICS.facts_request_duration
+            .with_label_values(&["query"])
+            .observe(start.elapsed().as_secs_f64());
 
         Ok(FactQueryResponse { facts, total })
     }

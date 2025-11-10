@@ -8,7 +8,7 @@
 
 use super::models::{ContextArtifact, ContextPriority, RelevanceScore};
 use super::token_budget::{BudgetAllocation, BudgetError, TokenBudgetManager};
-use super::summarizer::{Summarizer, LLMSummarizer, SummarizerConfig};
+use super::summarizer::{Summarizer, LLMSummarizer, ConcatenationSummarizer, SummarizerConfig};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -50,15 +50,22 @@ impl AdaptiveContextManager {
         Self { budget_manager, summarizer }
     }
 
-    /// Create with default budget configuration and LLM summarizer
+    /// Create with default budget configuration and LLM summarizer (with fallback)
     pub fn default() -> Result<Self> {
         let budget_manager = TokenBudgetManager::default()
             .map_err(|e| crate::error::ContextError::Configuration(e.to_string()))?;
-        let summarizer = LLMSummarizer::default()
-            .map_err(|e| crate::error::ContextError::Configuration(e.to_string()))?;
+        
+        // Try LLM summarizer first, fallback to concatenation for resilience
+        let summarizer: Arc<dyn Summarizer> = LLMSummarizer::default()
+            .map(|s| Arc::new(s) as Arc<dyn Summarizer>)
+            .unwrap_or_else(|_| {
+                warn!("LLM summarizer initialization failed, falling back to concatenation");
+                Arc::new(ConcatenationSummarizer::default())
+            });
+        
         Ok(Self {
             budget_manager,
-            summarizer: Arc::new(summarizer),
+            summarizer,
         })
     }
 
