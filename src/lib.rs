@@ -55,6 +55,7 @@ pub mod error;
 pub mod facts;
 pub mod hirag;
 pub mod middleware;
+pub mod metrics;
 pub mod observability;
 pub mod protocol;
 pub mod vector_db;

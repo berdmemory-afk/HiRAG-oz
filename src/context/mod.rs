@@ -6,7 +6,11 @@
 pub mod token_budget;
 pub mod adaptive_manager;
 pub mod models;
+pub mod token_estimator;
+pub mod summarizer;
 
 pub use token_budget::{TokenBudgetManager, BudgetAllocation, BudgetError};
 pub use adaptive_manager::{AdaptiveContextManager, AdaptiveContext};
 pub use models::{ContextPriority, RelevanceScore};
+pub use token_estimator::{TokenEstimator, TiktokenEstimator, WordBasedEstimator};
+pub use summarizer::{Summarizer, LLMSummarizer, SummarizerConfig};

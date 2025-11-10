@@ -161,6 +161,9 @@ async fn rate_limit_middleware(
 
     match rate_limiter.check_rate_limit(&client_id).await {
         Ok(_) => {
+            // Record successful rate limit check in metrics
+            crate::metrics::METRICS.record_rate_limit(&client_id, true);
+            
             let mut response = next.run(req).await;
             
             // Add rate limit headers
@@ -203,7 +206,9 @@ async fn rate_limit_middleware(
                 stats.config.window_duration.as_secs()
             };
             
-            // Create JSON error body for consistency
+            // Create ApiError for consistency with other endpoints
+            // Note: We use json! here to avoid importing vision models in routes
+            // In production, consider creating a shared error module
             let error_body = json!({
                 "code": "RATE_LIMIT",
                 "message": format!("Rate limit exceeded. Retry after {} seconds.", reset_secs),
@@ -218,6 +223,9 @@ async fn rate_limit_middleware(
                 axum::http::StatusCode::TOO_MANY_REQUESTS,
                 axum::Json(error_body)
             ).into_response();
+            
+            // Record rate limit hit in metrics
+            crate::metrics::METRICS.record_rate_limit(&client_id, false);
             
             // Add rate limit headers to 429 response
             if let Ok(limit_val) = HeaderValue::from_str(&limit.to_string()) {
