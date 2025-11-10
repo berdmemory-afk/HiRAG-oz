@@ -187,13 +187,37 @@ async fn rate_limit_middleware(
         Err(e) => {
             tracing::warn!("Rate limit exceeded for {}: {}", client_id, e);
             
-            // Build 429 response with rate limit headers
+            // Build 429 response with rate limit headers and JSON error body
+            use axum::response::IntoResponse;
+            use serde_json::json;
+            
             let stats = rate_limiter.stats().await;
             let limit = stats.config.max_requests;
-            let reset_secs = stats.config.window_duration.as_secs();
             
-            let mut response = axum::http::Response::new(axum::body::Body::empty());
-            *response.status_mut() = axum::http::StatusCode::TOO_MANY_REQUESTS;
+            // Calculate actual seconds remaining until reset
+            let reset_secs = if let Some((_, elapsed)) = rate_limiter.get_usage(&client_id).await {
+                stats.config.window_duration
+                    .saturating_sub(elapsed)
+                    .as_secs()
+            } else {
+                stats.config.window_duration.as_secs()
+            };
+            
+            // Create JSON error body for consistency
+            let error_body = json!({
+                "code": "RATE_LIMIT",
+                "message": format!("Rate limit exceeded. Retry after {} seconds.", reset_secs),
+                "details": {
+                    "limit": limit,
+                    "remaining": 0,
+                    "reset_in_seconds": reset_secs
+                }
+            });
+            
+            let mut response = (
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                axum::Json(error_body)
+            ).into_response();
             
             // Add rate limit headers to 429 response
             if let Ok(limit_val) = HeaderValue::from_str(&limit.to_string()) {

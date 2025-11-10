@@ -7,6 +7,8 @@ use qdrant_client::{
     qdrant::{
         CreateCollection, Distance, VectorParams, VectorsConfig,
         PointStruct, SearchPoints, Filter, Condition, FieldCondition, Match,
+        ScrollPoints, WithPayloadSelector, with_payload_selector::SelectorOptions,
+        point_id::PointIdOptions,
     },
 };
 use std::collections::HashMap;
@@ -32,6 +34,17 @@ impl Default for FactStoreConfig {
             vector_size: 1024,
         }
     }
+}
+
+/// Helper function to safely convert PointId to String
+/// Handles different PointId variants across qdrant-client versions
+fn point_id_to_string(point_id: &amp;qdrant_client::qdrant::PointId) -> Option<String> {
+    point_id.point_id_options.as_ref().map(|opts| {
+        match opts {
+            PointIdOptions::Uuid(uuid) => uuid.clone(),
+            PointIdOptions::Num(num) => num.to_string(),
+        }
+    })
 }
 
 /// Facts store
@@ -212,7 +225,7 @@ impl FactStore {
             .map_err(|e| ContextError::Internal(format!("Failed to check for duplicate: {}", e)))?;
 
         if let Some(point) = scroll_result.points.first() {
-            Ok(point.id.as_ref().map(|id| id.to_string()))
+            Ok(point.id.as_ref().and_then(point_id_to_string))
         } else {
             Ok(None)
         }
@@ -308,7 +321,7 @@ impl FactStore {
                 let payload = point.payload.as_ref()?;
                 
                 Some(Fact {
-                    id: point.id.as_ref()?.to_string(),
+                    id: point_id_to_string(point.id.as_ref()?)?,
                     subject: payload.get("subject")?.as_str()?.to_string(),
                     predicate: payload.get("predicate")?.as_str()?.to_string(),
                     object: payload.get("object")?.as_str()?.to_string(),
@@ -323,6 +336,14 @@ impl FactStore {
                 })
             })
             .collect();
+
+        // Sort for deterministic ordering across queries
+        // Primary: observed_at (oldest first), Secondary: id (lexicographic)
+        let mut facts = facts;
+        facts.sort_by(|a, b| {
+            a.observed_at.cmp(&b.observed_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
         let total = facts.len();
 
