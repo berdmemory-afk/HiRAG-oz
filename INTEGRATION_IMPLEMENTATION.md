@@ -6,7 +6,7 @@ This document tracks the implementation of critical integrations to wire togethe
 ## Implementation Tasks
 
 ### 1. Wire TiktokenEstimator into TokenBudgetManager ✅
-**Status**: In Progress
+**Status**: COMPLETE
 **Files**: `src/context/token_budget.rs`
 **Changes**:
 - Add `TokenEstimator` trait field to `TokenBudgetManager`
@@ -16,7 +16,7 @@ This document tracks the implementation of critical integrations to wire togethe
 - Update tests to use both estimators
 
 ### 2. Wire LLMSummarizer into AdaptiveContextManager ✅
-**Status**: In Progress
+**Status**: COMPLETE
 **Files**: `src/context/adaptive_manager.rs`
 **Changes**:
 - Add `Summarizer` trait field to `AdaptiveContextManager`
@@ -26,7 +26,7 @@ This document tracks the implementation of critical integrations to wire togethe
 - Update tests to use both summarizers
 
 ### 3. Add Metrics to Vision/Facts Handlers ✅
-**Status**: In Progress
+**Status**: COMPLETE
 **Files**: 
 - `src/api/vision/handlers.rs`
 - `src/facts/store.rs`
@@ -37,7 +37,7 @@ This document tracks the implementation of critical integrations to wire togethe
 - Add error counters
 
 ### 4. Expose /metrics Endpoint ✅
-**Status**: In Progress
+**Status**: COMPLETE
 **Files**: `src/api/routes.rs`, `src/api/router_complete.rs`
 **Changes**:
 - Create `metrics_handler()` function
@@ -45,7 +45,7 @@ This document tracks the implementation of critical integrations to wire togethe
 - Return Prometheus text format
 
 ### 5. Update Configuration ✅
-**Status**: In Progress
+**Status**: COMPLETE
 **Files**: `config.toml`
 **Changes**:
 - Add `[summarizer]` section
@@ -53,7 +53,7 @@ This document tracks the implementation of critical integrations to wire togethe
 - Document all new options
 
 ### 6. Update Documentation ✅
-**Status**: In Progress
+**Status**: COMPLETE
 **Files**: `README.md`, `INTEGRATION_GUIDE.md`
 **Changes**:
 - Document new configuration options
