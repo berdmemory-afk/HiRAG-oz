@@ -129,12 +129,21 @@ impl FactStore {
         });
 
         // Convert to HashMap for Qdrant
+        // Note: PointStruct::new accepts serde_json::Value in recent qdrant-client versions
+        // If compilation fails, uncomment the QValue mapping below
         let payload: HashMap<String, serde_json::Value> = payload_json
             .as_object()
             .ok_or_else(|| ContextError::Internal("Failed to create payload object".to_string()))?
             .clone()
             .into_iter()
             .collect();
+
+        // Alternative: Map to qdrant::Value if needed (uncomment if compile fails)
+        // use qdrant_client::qdrant::value::Value as QValue;
+        // let payload: HashMap<String, QValue> = payload
+        //     .into_iter()
+        //     .map(|(k, v)| (k, QValue::from(v)))
+        //     .collect();
 
         // Create dummy vector (in production, this would be an embedding)
         let vector = vec![0.0; self.config.vector_size];
@@ -189,14 +198,14 @@ impl FactStore {
             .scroll(&ScrollPoints {
                 collection_name: self.config.collection_name.clone(),
                 filter: Some(filter),
-                limit: Some(1),
+                limit: Some(1u32),
                 with_payload: Some(with_payload),
                 ..Default::default()
             })
             .await
             .map_err(|e| ContextError::Internal(format!("Failed to check for duplicate: {}", e)))?;
 
-        if let Some(point) = scroll_result.result.first() {
+        if let Some(point) = scroll_result.points.first() {
             Ok(point.id.as_ref().map(|id| id.to_string()))
         } else {
             Ok(None)
