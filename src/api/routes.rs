@@ -144,6 +144,8 @@ async fn rate_limit_middleware(
     req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> Result<axum::response::Response, axum::http::StatusCode> {
+    use axum::http::HeaderValue;
+    
     // Extract client ID from IP or header
     let client_id = req
         .headers()
@@ -158,7 +160,30 @@ async fn rate_limit_middleware(
         .unwrap_or_else(|| "unknown".to_string());
 
     match rate_limiter.check_rate_limit(&client_id).await {
-        Ok(_) => Ok(next.run(req).await),
+        Ok(_) => {
+            let mut response = next.run(req).await;
+            
+            // Add rate limit headers
+            if let Some((count, _elapsed)) = rate_limiter.get_usage(&client_id).await {
+                let stats = rate_limiter.stats().await;
+                let limit = stats.config.max_requests;
+                let remaining = limit.saturating_sub(count);
+                
+                if let Ok(limit_val) = HeaderValue::from_str(&limit.to_string()) {
+                    response.headers_mut().insert("X-RateLimit-Limit", limit_val);
+                }
+                if let Ok(remaining_val) = HeaderValue::from_str(&remaining.to_string()) {
+                    response.headers_mut().insert("X-RateLimit-Remaining", remaining_val);
+                }
+                // Reset time is window_duration from now
+                let reset_secs = stats.config.window_duration.as_secs();
+                if let Ok(reset_val) = HeaderValue::from_str(&reset_secs.to_string()) {
+                    response.headers_mut().insert("X-RateLimit-Reset", reset_val);
+                }
+            }
+            
+            Ok(response)
+        }
         Err(e) => {
             tracing::warn!("Rate limit exceeded for {}: {}", client_id, e);
             Err(axum::http::StatusCode::TOO_MANY_REQUESTS)

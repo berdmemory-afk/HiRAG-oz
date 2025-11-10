@@ -117,18 +117,24 @@ impl FactStore {
             )));
         }
 
-        // Create payload
-        let mut payload = HashMap::new();
-        payload.insert("subject".to_string(), fact.subject.clone().into());
-        payload.insert("predicate".to_string(), fact.predicate.clone().into());
-        payload.insert("object".to_string(), fact.object.clone().into());
-        payload.insert("confidence".to_string(), (fact.confidence as f64).into());
-        payload.insert("hash".to_string(), fact.hash.clone().into());
-        payload.insert("observed_at".to_string(), fact.observed_at.to_rfc3339().into());
+        // Create payload using serde_json for safety
+        let payload_json = serde_json::json!({
+            "subject": fact.subject,
+            "predicate": fact.predicate,
+            "object": fact.object,
+            "confidence": fact.confidence,
+            "hash": fact.hash,
+            "observed_at": fact.observed_at.to_rfc3339(),
+            "source_doc": fact.source_doc,
+        });
 
-        if let Some(source_doc) = &fact.source_doc {
-            payload.insert("source_doc".to_string(), source_doc.clone().into());
-        }
+        // Convert to HashMap for Qdrant
+        let payload: HashMap<String, serde_json::Value> = payload_json
+            .as_object()
+            .ok_or_else(|| ContextError::Internal("Failed to create payload object".to_string()))?
+            .clone()
+            .into_iter()
+            .collect();
 
         // Create dummy vector (in production, this would be an embedding)
         let vector = vec![0.0; self.config.vector_size];
@@ -154,8 +160,10 @@ impl FactStore {
         })
     }
 
-    /// Check for duplicate fact by hash
+    /// Check for duplicate fact by hash using filter-only scroll
     async fn check_duplicate(&self, hash: &str) -> Result<Option<String>> {
+        use qdrant_client::qdrant::{ScrollPoints, WithPayloadSelector, with_payload_selector::SelectorOptions};
+        
         let filter = Filter {
             must: vec![Condition {
                 condition_one_of: Some(qdrant_client::qdrant::condition::ConditionOneOf::Field(
@@ -173,20 +181,23 @@ impl FactStore {
             ..Default::default()
         };
 
-        let search_result = self.client
-            .search_points(&SearchPoints {
+        let with_payload = WithPayloadSelector {
+            selector_options: Some(SelectorOptions::Enable(true))
+        };
+
+        let scroll_result = self.client
+            .scroll(&ScrollPoints {
                 collection_name: self.config.collection_name.clone(),
-                vector: vec![0.0; self.config.vector_size],
                 filter: Some(filter),
-                limit: 1,
-                with_payload: Some(true.into()),
+                limit: Some(1),
+                with_payload: Some(with_payload),
                 ..Default::default()
             })
             .await
-            .map_err(|e| ContextError::Internal(format!("Failed to search for duplicate: {}", e)))?;
+            .map_err(|e| ContextError::Internal(format!("Failed to check for duplicate: {}", e)))?;
 
-        if let Some(point) = search_result.result.first() {
-            Ok(Some(point.id.clone().unwrap().to_string()))
+        if let Some(point) = scroll_result.result.first() {
+            Ok(point.id.as_ref().map(|id| id.to_string()))
         } else {
             Ok(None)
         }

@@ -32,6 +32,7 @@ pub fn build_vision_routes(
     body_limiter: Arc<BodyLimiter>,
 ) -> Router {
     use crate::api::vision::handlers;
+    use crate::api::routes::{rate_limit_middleware, auth_middleware_fn};
     
     Router::new()
         .route("/api/v1/vision/search", post(handlers::search_regions))
@@ -42,8 +43,14 @@ pub fn build_vision_routes(
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
-                // Note: Auth and rate limiting middleware should be applied
-                // at the router merge level or here if needed per-route
+                .layer(axum::middleware::from_fn_with_state(
+                    rate_limiter,
+                    rate_limit_middleware,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware,
+                    auth_middleware_fn,
+                ))
         )
         .with_state(vision_state)
 }
@@ -56,6 +63,7 @@ pub fn build_facts_routes(
     body_limiter: Arc<BodyLimiter>,
 ) -> Router {
     use crate::facts::handlers;
+    use crate::api::routes::{rate_limit_middleware, auth_middleware_fn};
     
     Router::new()
         .route("/api/v1/facts", post(handlers::insert_fact))
@@ -64,8 +72,14 @@ pub fn build_facts_routes(
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
-                // Note: Auth and rate limiting middleware should be applied
-                // at the router merge level or here if needed per-route
+                .layer(axum::middleware::from_fn_with_state(
+                    rate_limiter,
+                    rate_limit_middleware,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    auth_middleware,
+                    auth_middleware_fn,
+                ))
         )
         .with_state(facts_state)
 }
