@@ -30,10 +30,13 @@ pub enum ContextError {
     Auth(#[from] crate::middleware::AuthError),
     
     #[error("Configuration error: {0}")]
-    Config(String),
+    Configuration(String),
     
     #[error("Internal error: {0}")]
     Internal(String),
+    
+    #[error("Token budget error: {0}")]
+    TokenBudget(String),
 }
 
 /// Errors related to embedding generation
@@ -153,6 +156,11 @@ pub enum ProtocolError {
 
 impl From<config::ConfigError> for ContextError {
     fn from(err: config::ConfigError) -> Self {
-        ContextError::Config(err.to_string())
+        ContextError::Configuration(err.to_string())
+    }
+}
+impl From<crate::context::token_budget::BudgetError> for ContextError {
+    fn from(err: crate::context::token_budget::BudgetError) -> Self {
+        ContextError::TokenBudget(err.to_string())
     }
 }

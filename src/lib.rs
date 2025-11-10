@@ -49,8 +49,10 @@
 
 pub mod api;
 pub mod config;
+pub mod context;
 pub mod embedding;
 pub mod error;
+pub mod facts;
 pub mod hirag;
 pub mod middleware;
 pub mod observability;
@@ -64,9 +66,12 @@ pub use error::{ContextError, Result};
 
 /// Re-export commonly used types
 pub mod prelude {
+    pub use crate::api::vision::VisionState;
     pub use crate::config::Config;
+    pub use crate::context::{TokenBudgetManager, AdaptiveContextManager, BudgetAllocation};
     pub use crate::embedding::{EmbeddingClient, EmbeddingProvider};
     pub use crate::error::{ContextError, Result};
+    pub use crate::facts::{FactStore, Fact, FactQuery, FactsState};
     pub use crate::hirag::{ContextManager, HiRAGManager, ContextRequest, ContextResponse};
     pub use crate::middleware::{RateLimiter, RateLimitConfig, AuthMiddleware, AuthConfig, InputValidator};
     pub use crate::observability::{MetricsCollector, HealthChecker};

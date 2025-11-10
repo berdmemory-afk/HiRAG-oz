@@ -49,3 +49,26 @@ format = "json"
 port = 8081
 host = "0.0.0.0"
 max_body_size_mb = 10
+[token_budget]
+# Token budget configuration for ≤8k token enforcement
+# Based on brainstorming.md specifications
+system_tokens = 700          # System/Instructions: 600-800 tokens
+running_brief = 1200         # Running Brief: 1,000-1,500 tokens
+recent_turns = 450           # Recent Turns: 300-600 tokens
+retrieved_context = 3750     # Retrieved Context: 3,000-4,500 tokens (8-12 snippets)
+completion = 1000            # Completion: 800-1,200 tokens
+max_total = 8000             # Maximum total tokens per turn
+
+[vision]
+# Vision API configuration for DeepSeek OCR integration
+service_url = "http://localhost:8080"  # DeepSeek service endpoint (stub)
+timeout_ms = 5000                       # Request timeout in milliseconds
+max_regions_per_request = 16            # Maximum regions per decode request
+default_fidelity = "10x"                # Default fidelity level (20x, 10x, 5x, 1x)
+
+[facts]
+# Facts store configuration for neuro-symbolic reasoning
+collection_name = "facts"               # Qdrant collection name for facts
+dedup_enabled = true                    # Enable hash-based deduplication
+confidence_threshold = 0.8              # Minimum confidence for fact insertion
+max_facts_per_query = 100               # Maximum facts returned per query
