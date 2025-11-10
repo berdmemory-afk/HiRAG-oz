@@ -72,3 +72,17 @@ collection_name = "facts"               # Qdrant collection name for facts
 dedup_enabled = true                    # Enable hash-based deduplication
 confidence_threshold = 0.8              # Minimum confidence for fact insertion
 max_facts_per_query = 100               # Maximum facts returned per query
+
+[token_estimator]
+# Token estimation strategy configuration
+# Options: "tiktoken" (production, accurate) or "word_based" (fallback)
+strategy = "tiktoken"                   # Use tiktoken for accurate token counting
+tokens_per_word = 1.3                   # Fallback ratio for word-based estimation
+
+[summarizer]
+# LLM summarizer configuration for running brief compression
+endpoint = "http://localhost:8080/v1/chat/completions"  # OpenAI-compatible endpoint
+api_key = ""                            # Optional API key (leave empty if not needed)
+model = "gpt-3.5-turbo"                 # Model to use for summarization
+timeout_secs = 30                       # Request timeout in seconds
+max_retries = 3                         # Maximum retry attempts on failure

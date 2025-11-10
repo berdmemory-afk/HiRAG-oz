@@ -8,9 +8,11 @@
 
 use super::models::{ContextArtifact, ContextPriority, RelevanceScore};
 use super::token_budget::{BudgetAllocation, BudgetError, TokenBudgetManager};
+use super::summarizer::{Summarizer, LLMSummarizer, SummarizerConfig};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 /// Adaptive context with budget tracking
@@ -39,19 +41,47 @@ impl AdaptiveContext {
 /// Adaptive context manager
 pub struct AdaptiveContextManager {
     budget_manager: TokenBudgetManager,
+    summarizer: Arc<dyn Summarizer>,
 }
 
 impl AdaptiveContextManager {
-    /// Create a new adaptive context manager
-    pub fn new(budget_manager: TokenBudgetManager) -> Self {
-        Self { budget_manager }
+    /// Create a new adaptive context manager with custom summarizer
+    pub fn new(budget_manager: TokenBudgetManager, summarizer: Arc<dyn Summarizer>) -> Self {
+        Self { budget_manager, summarizer }
     }
 
-    /// Create with default budget configuration
+    /// Create with default budget configuration and LLM summarizer
     pub fn default() -> Result<Self> {
         let budget_manager = TokenBudgetManager::default()
             .map_err(|e| crate::error::ContextError::Configuration(e.to_string()))?;
-        Ok(Self { budget_manager })
+        let summarizer = LLMSummarizer::default()
+            .map_err(|e| crate::error::ContextError::Configuration(e.to_string()))?;
+        Ok(Self {
+            budget_manager,
+            summarizer: Arc::new(summarizer),
+        })
+    }
+
+    /// Create with LLM summarizer (production recommended)
+    pub fn with_llm_summarizer(
+        budget_manager: TokenBudgetManager,
+        config: SummarizerConfig,
+    ) -> Result<Self> {
+        let summarizer = LLMSummarizer::new(config)
+            .map_err(|e| crate::error::ContextError::Configuration(e.to_string()))?;
+        Ok(Self {
+            budget_manager,
+            summarizer: Arc::new(summarizer),
+        })
+    }
+
+    /// Create with concatenation summarizer (fallback)
+    pub fn with_concat_summarizer(budget_manager: TokenBudgetManager) -> Result<Self> {
+        let summarizer = ConcatenationSummarizer::default();
+        Ok(Self {
+            budget_manager,
+            summarizer: Arc::new(summarizer),
+        })
     }
 
     /// Build adaptive context from components
@@ -214,30 +244,34 @@ impl AdaptiveContextManager {
         })
     }
 
-    /// Summarize turns into running brief
+    /// Summarize turns into running brief using configured summarizer
     async fn summarize_turns(
         &self,
         current_brief: &str,
         turns: &[String],
     ) -> Result<String> {
-        // Simple summarization: concatenate brief with key points from turns
-        // In production, this should use LLM-based summarization
-        let mut summary = current_brief.to_string();
-        
-        if !turns.is_empty() {
-            summary.push_str("\n\n[Recent Activity Summary]\n");
-            for (i, turn) in turns.iter().enumerate() {
-                // Extract first sentence or first 100 chars as summary
-                let turn_summary = turn
-                    .split('.')
-                    .next()
-                    .unwrap_or(turn)
-                    .chars()
-                    .take(100)
-                    .collect::<String>();
-                summary.push_str(&format!("{}. {}\n", i + 1, turn_summary));
-            }
+        if turns.is_empty() {
+            return Ok(current_brief.to_string());
         }
+
+        // Combine current brief with turns
+        let mut texts_to_summarize = vec![current_brief.to_string()];
+        texts_to_summarize.extend(turns.iter().cloned());
+
+        // Calculate target token count (running brief budget)
+        let target_tokens = self.budget_manager.config().running_brief;
+
+        // Use configured summarizer
+        let summary = self.summarizer
+            .summarize(&texts_to_summarize, target_tokens)
+            .await
+            .map_err(|e| crate::error::ContextError::Configuration(e.to_string()))?;
+
+        debug!(
+            "Summarized {} texts into {} tokens",
+            texts_to_summarize.len(),
+            self.budget_manager.estimate_tokens(&summary)
+        );
 
         Ok(summary)
     }

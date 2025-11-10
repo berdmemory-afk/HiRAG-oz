@@ -125,8 +125,14 @@ async fn readiness_handler(
 async fn metrics_handler(
     axum::extract::State((app_state, metrics)): axum::extract::State<(AppState, Arc<MetricsCollector>)>,
 ) -> impl axum::response::IntoResponse {
+    use crate::metrics::METRICS;
+    
     // Export core metrics
     let mut output = metrics.export_prometheus();
+    
+    // Append new production metrics from METRICS singleton
+    output.push_str("\n\n# Production Infrastructure Metrics\n");
+    output.push_str(&METRICS.export_prometheus());
     
     // Append circuit breaker metrics if available
     if let Some(circuit_breaker) = &app_state.circuit_breaker {

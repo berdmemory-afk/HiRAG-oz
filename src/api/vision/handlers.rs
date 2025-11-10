@@ -2,12 +2,14 @@
 
 use super::client::VisionServiceClient;
 use super::models::*;
+use crate::metrics::METRICS;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
 };
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::{error, info};
 
 /// Application state for vision handlers
@@ -23,10 +25,14 @@ pub async fn search_regions(
     State(state): State<VisionState>,
     Json(request): Json<VisionSearchRequest>,
 ) -> Result<Json<VisionSearchResponse>, (StatusCode, Json<ApiError>)> {
+    let start = Instant::now();
+    METRICS.vision_search_requests.inc();
+    
     info!("Vision search request: query={}", request.query);
 
     // Validate request
     if request.query.is_empty() {
+        METRICS.vision_search_errors.inc();
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -37,6 +43,7 @@ pub async fn search_regions(
     }
 
     if request.top_k > 50 {
+        METRICS.vision_search_errors.inc();
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -47,16 +54,22 @@ pub async fn search_regions(
     }
 
     // Call vision service
-    match state.client.search_regions(request).await {
-        Ok(response) => Ok(Json(response)),
+    let result = match state.client.search_regions(request).await {
+        Ok(response) => {
+            METRICS.vision_search_duration.observe(start.elapsed().as_secs_f64());
+            Ok(Json(response))
+        }
         Err(e) => {
+            METRICS.vision_search_errors.inc();
             error!("Vision search failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiError::new(error_codes::INTERNAL_ERROR, e.to_string())),
             ))
         }
-    }
+    };
+    
+    result
 }
 
 /// Decode regions to text
@@ -66,10 +79,14 @@ pub async fn decode_regions(
     State(state): State<VisionState>,
     Json(request): Json<DecodeRequest>,
 ) -> Result<Json<DecodeResponse>, (StatusCode, Json<ApiError>)> {
+    let start = Instant::now();
+    METRICS.vision_decode_requests.inc();
+    
     info!("Vision decode request: {} regions", request.region_ids.len());
 
     // Validate request
     if request.region_ids.is_empty() {
+        METRICS.vision_decode_errors.inc();
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -80,6 +97,7 @@ pub async fn decode_regions(
     }
 
     if request.region_ids.len() > 16 {
+        METRICS.vision_decode_errors.inc();
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -95,16 +113,22 @@ pub async fn decode_regions(
     // }
 
     // Call vision service
-    match state.client.decode_regions(request).await {
-        Ok(response) => Ok(Json(response)),
+    let result = match state.client.decode_regions(request).await {
+        Ok(response) => {
+            METRICS.vision_decode_duration.observe(start.elapsed().as_secs_f64());
+            Ok(Json(response))
+        }
         Err(e) => {
+            METRICS.vision_decode_errors.inc();
             error!("Vision decode failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiError::new(error_codes::INTERNAL_ERROR, e.to_string())),
             ))
         }
-    }
+    };
+    
+    result
 }
 
 /// Index a document
@@ -114,10 +138,14 @@ pub async fn index_document(
     State(state): State<VisionState>,
     Json(request): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, (StatusCode, Json<ApiError>)> {
+    let start = Instant::now();
+    METRICS.vision_index_requests.inc();
+    
     info!("Vision index request: doc_url={}", request.doc_url);
 
     // Validate request
     if request.doc_url.is_empty() {
+        METRICS.vision_index_errors.inc();
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -128,16 +156,22 @@ pub async fn index_document(
     }
 
     // Call vision service
-    match state.client.index_document(request).await {
-        Ok(response) => Ok(Json(response)),
+    let result = match state.client.index_document(request).await {
+        Ok(response) => {
+            METRICS.vision_index_duration.observe(start.elapsed().as_secs_f64());
+            Ok(Json(response))
+        }
         Err(e) => {
+            METRICS.vision_index_errors.inc();
             error!("Vision index failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ApiError::new(error_codes::INTERNAL_ERROR, e.to_string())),
             ))
         }
-    }
+    };
+    
+    result
 }
 
 /// Get job status

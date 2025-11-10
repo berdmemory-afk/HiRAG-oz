@@ -222,6 +222,19 @@ impl Metrics {
             self.rate_limit_hits.with_label_values(&[client_id]).inc();
         }
     }
+    
+    /// Export metrics in Prometheus text format
+    pub fn export_prometheus(&self) -> String {
+        use prometheus::Encoder;
+        
+        let encoder = prometheus::TextEncoder::new();
+        let metric_families = prometheus::gather();
+        
+        let mut buffer = Vec::new();
+        encoder.encode(&metric_families, &mut buffer).unwrap_or_default();
+        
+        String::from_utf8(buffer).unwrap_or_default()
+    }
 }
 
 /// Helper macro to time operations

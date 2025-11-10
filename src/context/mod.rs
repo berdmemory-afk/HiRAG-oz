@@ -13,4 +13,4 @@ pub use token_budget::{TokenBudgetManager, BudgetAllocation, BudgetError};
 pub use adaptive_manager::{AdaptiveContextManager, AdaptiveContext};
 pub use models::{ContextPriority, RelevanceScore};
 pub use token_estimator::{TokenEstimator, TiktokenEstimator, WordBasedEstimator};
-pub use summarizer::{Summarizer, LLMSummarizer, SummarizerConfig};
+pub use summarizer::{Summarizer, LLMSummarizer, ConcatenationSummarizer, SummarizerConfig};

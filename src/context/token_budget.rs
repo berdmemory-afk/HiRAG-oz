@@ -10,6 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use super::token_estimator::{TokenEstimator, TiktokenEstimator, WordBasedEstimator};
+use std::sync::Arc;
 
 /// Token budget configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,18 +95,39 @@ pub enum BudgetError {
 /// Token budget manager
 pub struct TokenBudgetManager {
     config: TokenBudgetConfig,
+    estimator: Arc<dyn TokenEstimator>,
 }
 
 impl TokenBudgetManager {
-    /// Create a new token budget manager
-    pub fn new(config: TokenBudgetConfig) -> Result<Self, BudgetError> {
+    /// Create a new token budget manager with custom estimator
+    pub fn new(config: TokenBudgetConfig, estimator: Arc<dyn TokenEstimator>) -> Result<Self, BudgetError> {
         config.validate()?;
-        Ok(Self { config })
+        Ok(Self { config, estimator })
     }
 
-    /// Create with default configuration
+    /// Create with default configuration and tiktoken estimator
     pub fn default() -> Result<Self, BudgetError> {
-        Self::new(TokenBudgetConfig::default())
+        Self::with_tiktoken(TokenBudgetConfig::default())
+    }
+
+    /// Create with tiktoken estimator (production recommended)
+    pub fn with_tiktoken(config: TokenBudgetConfig) -> Result<Self, BudgetError> {
+        config.validate()?;
+        let estimator = TiktokenEstimator::new()
+            .map_err(|e| BudgetError::EstimationFailed(format!("Failed to initialize tiktoken: {}", e)))?;
+        Ok(Self {
+            config,
+            estimator: Arc::new(estimator),
+        })
+    }
+
+    /// Create with word-based estimator (fallback)
+    pub fn with_word_based(config: TokenBudgetConfig) -> Result<Self, BudgetError> {
+        config.validate()?;
+        Ok(Self {
+            config,
+            estimator: Arc::new(WordBasedEstimator::default()),
+        })
     }
 
     /// Allocate tokens based on current usage
@@ -147,13 +170,14 @@ impl TokenBudgetManager {
         Ok(())
     }
 
-    /// Estimate tokens for text (simple word-based approximation)
-    /// In production, this should use tiktoken or model-specific tokenizer
+    /// Estimate tokens for text using the configured estimator
     pub fn estimate_tokens(&self, text: &str) -> usize {
-        // Simple approximation: ~1.3 tokens per word
-        // This is a rough estimate; real implementation should use proper tokenizer
-        let words = text.split_whitespace().count();
-        ((words as f32) * 1.3) as usize
+        self.estimator.estimate(text)
+    }
+
+    /// Estimate tokens for multiple texts
+    pub fn estimate_tokens_batch(&self, texts: &[&str]) -> Vec<usize> {
+        self.estimator.estimate_batch(texts)
     }
 
     /// Calculate how much to shrink retrieved context to fit budget
@@ -222,12 +246,30 @@ mod tests {
     }
 
     #[test]
-    fn test_token_estimation() {
+    fn test_token_estimation_tiktoken() {
         let manager = TokenBudgetManager::default().unwrap();
         let text = "This is a test sentence with ten words in it.";
         let tokens = manager.estimate_tokens(text);
         assert!(tokens > 0);
-        assert!(tokens < 20); // Should be around 13 tokens
+        assert!(tokens < 20); // Should be around 13 tokens with tiktoken
+    }
+
+    #[test]
+    fn test_token_estimation_word_based() {
+        let manager = TokenBudgetManager::with_word_based(TokenBudgetConfig::default()).unwrap();
+        let text = "This is a test sentence with ten words in it.";
+        let tokens = manager.estimate_tokens(text);
+        assert!(tokens > 0);
+        assert!(tokens < 20); // Should be around 13 tokens with word-based
+    }
+
+    #[test]
+    fn test_batch_estimation() {
+        let manager = TokenBudgetManager::default().unwrap();
+        let texts = vec!["Hello world", "Test sentence", "Another example"];
+        let tokens = manager.estimate_tokens_batch(&texts);
+        assert_eq!(tokens.len(), 3);
+        assert!(tokens.iter().all(|&t| t > 0));
     }
 
     #[test]
