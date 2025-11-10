@@ -141,7 +141,7 @@ impl FactStore {
         );
 
         self.client
-            .upsert_points_blocking(&self.config.collection_name, vec![point])
+            .upsert_points(&self.config.collection_name, None, vec![point], None)
             .await
             .map_err(|e| ContextError::Internal(format!("Failed to insert fact: {}", e)))?;
 

@@ -42,6 +42,8 @@ pub fn build_vision_routes(
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
+                // Note: Auth and rate limiting middleware should be applied
+                // at the router merge level or here if needed per-route
         )
         .with_state(vision_state)
 }
@@ -62,6 +64,8 @@ pub fn build_facts_routes(
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
+                // Note: Auth and rate limiting middleware should be applied
+                // at the router merge level or here if needed per-route
         )
         .with_state(facts_state)
 }

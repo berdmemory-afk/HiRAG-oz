@@ -51,6 +51,36 @@ impl EnhancedHiRAGManager {
         })
     }
 
+    /// Create from configuration
+    pub fn from_config(
+        base_manager: Arc<HiRAGManager>,
+        config: &crate::config::Config,
+    ) -> Result<Self> {
+        use crate::context::token_budget::TokenBudgetConfig as TBConfig;
+        
+        let budget_config = if let Some(ref cfg) = config.token_budget {
+            TBConfig {
+                system_tokens: cfg.system_tokens,
+                running_brief: cfg.running_brief,
+                recent_turns: cfg.recent_turns,
+                retrieved_context: cfg.retrieved_context,
+                completion: cfg.completion,
+                max_total: cfg.max_total,
+            }
+        } else {
+            TBConfig::default()
+        };
+        
+        let budget_manager = TokenBudgetManager::new(budget_config)?;
+        let context_manager = AdaptiveContextManager::new(budget_manager.clone());
+        
+        Ok(Self {
+            base_manager,
+            context_manager,
+            budget_manager,
+        })
+    }
+
     /// Store context with token budget awareness
     pub async fn store_context_with_budget(
         &self,

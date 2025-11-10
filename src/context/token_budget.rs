@@ -233,10 +233,12 @@ mod tests {
     #[test]
     fn test_budget_allocation_within_limit() {
         let manager = TokenBudgetManager::default().unwrap();
-        let allocation = manager.allocate(700, 1200, 450, 3750, 1000);
+        // 700 + 1200 + 450 + 3750 + 900 = 7000 (within 8000 limit)
+        let allocation = manager.allocate(700, 1200, 450, 3750, 900);
         assert!(allocation.is_ok());
         let alloc = allocation.unwrap();
-        assert_eq!(alloc.total_allocated, 8100);
+        assert_eq!(alloc.total_allocated, 7000);
+        assert!(alloc.total_allocated <= 8000);
     }
 
     #[test]
