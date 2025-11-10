@@ -186,7 +186,28 @@ async fn rate_limit_middleware(
         }
         Err(e) => {
             tracing::warn!("Rate limit exceeded for {}: {}", client_id, e);
-            Err(axum::http::StatusCode::TOO_MANY_REQUESTS)
+            
+            // Build 429 response with rate limit headers
+            let stats = rate_limiter.stats().await;
+            let limit = stats.config.max_requests;
+            let reset_secs = stats.config.window_duration.as_secs();
+            
+            let mut response = axum::http::Response::new(axum::body::Body::empty());
+            *response.status_mut() = axum::http::StatusCode::TOO_MANY_REQUESTS;
+            
+            // Add rate limit headers to 429 response
+            if let Ok(limit_val) = HeaderValue::from_str(&limit.to_string()) {
+                response.headers_mut().insert("X-RateLimit-Limit", limit_val);
+            }
+            // Remaining is 0 when rate limited
+            if let Ok(remaining_val) = HeaderValue::from_str("0") {
+                response.headers_mut().insert("X-RateLimit-Remaining", remaining_val);
+            }
+            if let Ok(reset_val) = HeaderValue::from_str(&reset_secs.to_string()) {
+                response.headers_mut().insert("X-RateLimit-Reset", reset_val);
+            }
+            
+            Ok(response)
         }
     }
 }

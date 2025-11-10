@@ -12,6 +12,26 @@ pub struct BoundingBox {
     pub h: u32,
 }
 
+impl BoundingBox {
+    /// Validate bounding box is within page bounds
+    /// Returns true if bbox is valid (within bounds)
+    pub fn is_valid(&self, page_width: u32, page_height: u32) -> bool {
+        self.x.checked_add(self.w).map_or(false, |right| right <= page_width)
+            && self.y.checked_add(self.h).map_or(false, |bottom| bottom <= page_height)
+    }
+    
+    /// Get validation error message if bbox is invalid
+    pub fn validate(&self, page_width: u32, page_height: u32) -> Result<(), String> {
+        if !self.is_valid(page_width, page_height) {
+            return Err(format!(
+                "Bounding box out of bounds: x={}, y={}, w={}, h={} exceeds page dimensions {}x{}",
+                self.x, self.y, self.w, self.h, page_width, page_height
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Fidelity level for decoding
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -185,4 +205,42 @@ pub mod error_codes {
     pub const TIMEOUT: &str = "TIMEOUT";
     pub const UPSTREAM_ERROR: &str = "UPSTREAM_ERROR";
     pub const INTERNAL_ERROR: &str = "INTERNAL_ERROR";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bbox_valid() {
+        let bbox = BoundingBox { x: 100, y: 200, w: 400, h: 300 };
+        assert!(bbox.is_valid(1920, 1080));
+        assert!(bbox.validate(1920, 1080).is_ok());
+    }
+
+    #[test]
+    fn test_bbox_exceeds_width() {
+        let bbox = BoundingBox { x: 1800, y: 200, w: 400, h: 300 };
+        assert!(!bbox.is_valid(1920, 1080));
+        assert!(bbox.validate(1920, 1080).is_err());
+    }
+
+    #[test]
+    fn test_bbox_exceeds_height() {
+        let bbox = BoundingBox { x: 100, y: 900, w: 400, h: 300 };
+        assert!(!bbox.is_valid(1920, 1080));
+        assert!(bbox.validate(1920, 1080).is_err());
+    }
+
+    #[test]
+    fn test_bbox_overflow() {
+        let bbox = BoundingBox { x: u32::MAX - 10, y: 0, w: 100, h: 100 };
+        assert!(!bbox.is_valid(u32::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn test_fidelity_level_default() {
+        let fidelity = FidelityLevel::default();
+        assert_eq!(fidelity.as_str(), "10x");
+    }
 }

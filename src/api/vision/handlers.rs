@@ -88,6 +88,11 @@ pub async fn decode_regions(
             )),
         ));
     }
+    
+    // Note: BBox validation can be added when region metadata includes page dimensions
+    // Example: if let Some(region) = get_region(&region_id) {
+    //     region.bbox.validate(region.page_width, region.page_height)?;
+    // }
 
     // Call vision service
     match state.client.decode_regions(request).await {

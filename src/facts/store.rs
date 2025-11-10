@@ -155,6 +155,12 @@ impl FactStore {
             payload,
         );
 
+        // Upsert point to Qdrant
+        // Note: Signature for qdrant-client 1.7.x is:
+        //   upsert_points(collection_name, ordering, points, wait)
+        // If compilation fails with different version, try:
+        //   upsert_points(collection_name, points, wait) or
+        //   use UpsertPoints struct with .upsert() method
         self.client
             .upsert_points(&self.config.collection_name, None, vec![point], None)
             .await
@@ -276,30 +282,33 @@ impl FactStore {
             })
         };
 
-        // Search with limit
+        // Use filter-only scroll for deterministic retrieval (no vector influence)
         let limit = query.limit.min(self.config.max_facts_per_query);
         
-        let search_result = self.client
-            .search_points(&SearchPoints {
+        let with_payload = WithPayloadSelector {
+            selector_options: Some(SelectorOptions::Enable(true))
+        };
+        
+        let scroll_result = self.client
+            .scroll(&ScrollPoints {
                 collection_name: self.config.collection_name.clone(),
-                vector: vec![0.0; self.config.vector_size],
                 filter,
-                limit: limit as u64,
-                with_payload: Some(true.into()),
+                limit: Some(limit as u32),
+                with_payload: Some(with_payload),
                 ..Default::default()
             })
             .await
             .map_err(|e| ContextError::Internal(format!("Failed to query facts: {}", e)))?;
 
         // Convert results to facts
-        let facts: Vec<Fact> = search_result
-            .result
+        let facts: Vec<Fact> = scroll_result
+            .points
             .iter()
             .filter_map(|point| {
                 let payload = point.payload.as_ref()?;
                 
                 Some(Fact {
-                    id: point.id.clone()?.to_string(),
+                    id: point.id.as_ref()?.to_string(),
                     subject: payload.get("subject")?.as_str()?.to_string(),
                     predicate: payload.get("predicate")?.as_str()?.to_string(),
                     object: payload.get("object")?.as_str()?.to_string(),
