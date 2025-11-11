@@ -235,6 +235,104 @@ impl Tool for GitHubPrTool {
     }
 }
 
+/// Git push tool
+pub struct GitPushTool {
+    token_env: String,
+}
+
+impl GitPushTool {
+    pub fn new(token_env: String) -> Self {
+        Self { token_env }
+    }
+    
+    async fn get_token(&amp;self) -> Option<String> {
+        std::env::var(&amp;self.token_env).ok()
+    }
+    
+    async fn run_git(
+        &amp;self,
+        args: &amp;[&amp;str],
+        workdir: &amp;std::path::Path,
+    ) -> Result<String, ToolError> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(workdir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await?;
+        
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&amp;output.stderr);
+            return Err(ToolError::Git(stderr.to_string()));
+        }
+        
+        Ok(String::from_utf8_lossy(&amp;output.stdout).trim().to_string())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct PushInput {
+    branch: String,
+    #[serde(default = "default_remote")]
+    remote: String,
+}
+
+fn default_remote() -> String {
+    "origin".to_string()
+}
+
+#[async_trait]
+impl Tool for GitPushTool {
+    fn name(&amp;self) -> &amp;'static str {
+        "git_push"
+    }
+    
+    fn description(&amp;self) -> &amp;'static str {
+        "Push branch to remote repository"
+    }
+    
+    async fn invoke(&amp;self, input: Value, ctx: &amp;ToolContext) -> Result<Value, ToolError> {
+        let input: PushInput = serde_json::from_value(input)?;
+        
+        info!("Pushing branch {} to {}", input.branch, input.remote);
+        
+        // Get token for authentication
+        if let Some(token) = self.get_token().await {
+            // Get origin URL
+            let origin_url = self.run_git(&amp;["remote", "get-url", &amp;input.remote], &amp;ctx.workdir).await?;
+            
+            // If HTTPS GitHub URL, embed token for auth
+            if origin_url.starts_with("https://github.com/") {
+                let authed = origin_url.replacen(
+                    "https://github.com/",
+                    &amp;format!("https://x-access-token:{}@github.com/", token),
+                    1,
+                );
+                
+                // Set temporary remote with auth
+                let _ = self.run_git(&amp;["remote", "remove", "autodev"], &amp;ctx.workdir).await;
+                self.run_git(&amp;["remote", "add", "autodev", &amp;authed], &amp;ctx.workdir).await?;
+                self.run_git(&amp;["push", "-u", "autodev", &amp;input.branch], &amp;ctx.workdir).await?;
+                
+                info!("Branch {} pushed successfully", input.branch);
+            } else {
+                // Try normal push
+                self.run_git(&amp;["push", "-u", &amp;input.remote, &amp;input.branch], &amp;ctx.workdir).await?;
+            }
+        } else {
+            // No token; attempt unauthenticated push
+            warn!("No GitHub token found, attempting unauthenticated push");
+            self.run_git(&amp;["push", "-u", &amp;input.remote, &amp;input.branch], &amp;ctx.workdir).await?;
+        }
+        
+        Ok(serde_json::json!({
+            "pushed": true,
+            "branch": input.branch,
+        }))
+    }
+}
+
 /// Git clone tool
 pub struct GitCloneTool;
 

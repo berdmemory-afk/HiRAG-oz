@@ -59,8 +59,9 @@ impl Orchestrator {
         // Execute plan
         task.status = TaskStatus::Executing;
         match self.execute_plan(&task, &plan, &workdir).await {
-            Ok(_) => {
+            Ok(pr_url) => {
                 task.status = TaskStatus::PrCreated;
+                task.pr_url = pr_url;
                 AUTODEV_METRICS.tasks_success.inc();
                 info!("Task {} completed successfully in {:?}", task.id, start.elapsed());
             }
@@ -184,7 +185,20 @@ impl Orchestrator {
             status: StepStatus::Pending,
         });
         
-        // Step 4: Build
+        // Step 4: Push branch
+        steps.push(Step {
+            name: "Push branch".to_string(),
+            tool: "git_push".to_string(),
+            input: serde_json::json!({
+                "branch": format!("autodev/{}", task.id),
+                "remote": "origin",
+            }),
+            output: None,
+            error: None,
+            status: StepStatus::Pending,
+        });
+        
+        // Step 5: Build
         steps.push(Step {
             name: "Build project".to_string(),
             tool: "build".to_string(),
@@ -194,7 +208,7 @@ impl Orchestrator {
             status: StepStatus::Pending,
         });
         
-        // Step 5: Run tests
+        // Step 6: Run tests
         steps.push(Step {
             name: "Run tests".to_string(),
             tool: "test".to_string(),
@@ -204,7 +218,7 @@ impl Orchestrator {
             status: StepStatus::Pending,
         });
         
-        // Step 6: Static analysis
+        // Step 7: Static analysis
         steps.push(Step {
             name: "Run clippy".to_string(),
             tool: "clippy".to_string(),
@@ -214,7 +228,7 @@ impl Orchestrator {
             status: StepStatus::Pending,
         });
         
-        // Step 7: Secrets scan
+        // Step 8: Secrets scan
         steps.push(Step {
             name: "Scan for secrets".to_string(),
             tool: "secrets_scan".to_string(),
@@ -224,7 +238,17 @@ impl Orchestrator {
             status: StepStatus::Pending,
         });
         
-        // Step 8: Policy check
+        // Step 9: Check dependencies
+        steps.push(Step {
+            name: "Check dependencies".to_string(),
+            tool: "check_deps".to_string(),
+            input: serde_json::json!({}),
+            output: None,
+            error: None,
+            status: StepStatus::Pending,
+        });
+        
+        // Step 10: Policy check
         let policy_tool = if self.config.opa_url.is_some() {
             "policy"
         } else {
@@ -243,7 +267,7 @@ impl Orchestrator {
             status: StepStatus::Pending,
         });
         
-        // Step 9: Create PR
+        // Step 11: Create PR
         steps.push(Step {
             name: "Create pull request".to_string(),
             tool: "git_pr".to_string(),
@@ -278,7 +302,7 @@ impl Orchestrator {
     }
     
     /// Execute the plan
-    async fn execute_plan(&self, task: &Task, plan: &Plan, workdir: &PathBuf) -> Result<()> {
+    async fn execute_plan(&self, task: &Task, plan: &Plan, workdir: &PathBuf) -> Result<Option<String>> {
         info!("Executing plan with {} steps", plan.steps.len());
         
         let ctx = ToolContext {
@@ -291,13 +315,15 @@ impl Orchestrator {
         };
         
         let mut step_outputs: HashMap<String, serde_json::Value> = HashMap::new();
+        let mut pr_url: Option<String> = None;
+        let risk_tier = task.risk_tier;
         
         for (i, step) in plan.steps.iter().enumerate() {
             info!("Executing step {}/{}: {}", i + 1, plan.steps.len(), step.name);
             
             let start = std::time::Instant::now();
             
-            match self.execute_step(step, &ctx, &step_outputs).await {
+            match self.execute_step(step, &ctx, &step_outputs, risk_tier).await {
                 Ok(output) => {
                     AUTODEV_METRICS.steps_total
                         .with_label_values(&["success"])
@@ -305,6 +331,13 @@ impl Orchestrator {
                     AUTODEV_METRICS.step_duration
                         .with_label_values(&[&step.tool])
                         .observe(start.elapsed().as_secs_f64());
+                    
+                    // Capture PR URL if this is the PR creation step
+                    if step.tool == "git_pr" {
+                        if let Some(url) = output.get("pr_url").and_then(|v| v.as_str()) {
+                            pr_url = Some(url.to_string());
+                        }
+                    }
                     
                     step_outputs.insert(step.name.clone(), output);
                     info!("Step {} completed successfully", step.name);
@@ -328,7 +361,7 @@ impl Orchestrator {
             }
         }
         
-        Ok(())
+        Ok(pr_url)
     }
     
     /// Execute a single step
@@ -337,6 +370,7 @@ impl Orchestrator {
         step: &Step,
         ctx: &ToolContext,
         outputs: &HashMap<String, serde_json::Value>,
+        risk_tier: RiskTier,
     ) -> Result<serde_json::Value, ToolError> {
         let tool = self.tools.get(&step.tool)
             .ok_or_else(|| ToolError::Invalid(format!("Unknown tool: {}", step.tool)))?;
@@ -355,7 +389,7 @@ impl Orchestrator {
         
         // Special handling for policy - build complete input
         if step.tool == "policy_local" || step.tool == "policy" {
-            input = self.build_policy_input(ctx, outputs).await?;
+            input = self.build_policy_input(ctx, outputs, risk_tier).await?;
         }
         
         // Special handling for git_pr - track PR metrics
@@ -376,6 +410,7 @@ impl Orchestrator {
         &self,
         ctx: &ToolContext,
         outputs: &HashMap<String, serde_json::Value>,
+        risk_tier: RiskTier,
     ) -> Result<serde_json::Value, ToolError> {
         let clippy_warnings = outputs
             .get("Run clippy")
@@ -418,9 +453,16 @@ impl Orchestrator {
             })
             .unwrap_or_default();
         
+        // Map risk tier to string
+        let risk = match risk_tier {
+            RiskTier::Low => "low",
+            RiskTier::Medium => "medium",
+            RiskTier::High => "high",
+        };
+        
         Ok(serde_json::json!({
             "task_id": ctx.task_id,
-            "risk_tier": "low",
+            "risk_tier": risk,
             "diff": patch,
             "files_changed": files_changed,
             "new_dependencies": new_dependencies,
@@ -434,15 +476,33 @@ impl Orchestrator {
     async fn get_files_changed(&self, workdir: &std::path::Path) -> Result<Vec<String>, ToolError> {
         use tokio::process::Command;
         
+        // Use HEAD~1..HEAD to get files changed in the last commit
         let output = Command::new("git")
-            .args(&["diff", "--name-only", "HEAD"])
+            .args(&["diff", "--name-only", "HEAD~1..HEAD"])
             .current_dir(workdir)
             .output()
             .await
             .map_err(|e| ToolError::Git(e.to_string()))?;
         
         if !output.status.success() {
-            return Ok(vec![]);
+            // Fallback to checking staged changes if HEAD~1 doesn't exist
+            let output = Command::new("git")
+                .args(&["diff", "--name-only", "--cached"])
+                .current_dir(workdir)
+                .output()
+                .await
+                .map_err(|e| ToolError::Git(e.to_string()))?;
+            
+            if !output.status.success() {
+                return Ok(vec![]);
+            }
+            
+            let files = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(|s| s.to_string())
+                .collect();
+            
+            return Ok(files);
         }
         
         let files = String::from_utf8_lossy(&output.stdout)

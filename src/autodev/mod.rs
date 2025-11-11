@@ -9,6 +9,7 @@ pub mod orchestrator;
 pub mod config;
 pub mod metrics;
 pub mod api;
+pub mod server_integration;
 
 pub use schemas::{Task, Plan, Step, RiskTier, TaskStatus, CreateTaskRequest};
 pub use orchestrator::Orchestrator;
@@ -49,9 +50,10 @@ fn create_tools(config: &AutodevConfig) -> Result<Vec<Arc<dyn tools::Tool>>> {
         config.git.git_author_email.clone(),
     )));
     
-    // GitHub PR tool (if token available)
+    // GitHub PR and push tools (if token available)
     if let Ok(token) = std::env::var(&config.git.github_token_env) {
         tools.push(Arc::new(tools::git::GitHubPrTool::new(token)));
+        tools.push(Arc::new(tools::git::GitPushTool::new(config.git.github_token_env.clone())));
     }
     
     // Runner tools
