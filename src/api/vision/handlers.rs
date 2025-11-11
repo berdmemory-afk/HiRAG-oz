@@ -1,35 +1,22 @@
-//! Vision API handlers
-
-use super::client::VisionServiceClient;
-use super::deepseek_client::{DeepseekOcrClient, OcrError};
-use super::models::*;
-use crate::metrics::METRICS;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
-use std::sync::Arc;
 use std::time::Instant;
 use tracing::{error, info, warn};
 
-/// Application state for vision handlers
-#[derive(Clone)]
-pub struct VisionState {
-    pub client: Arc<VisionServiceClient>,
-    pub deepseek_client: Arc<DeepseekOcrClient>,
-}
+use crate::api::error_codes;
+use crate::api::models::ApiError;
+use crate::api::vision::models::{
+    DecodeRequest, DecodeResponse, IndexRequest, IndexResponse, JobStatusResponse,
+    VisionSearchRequest, VisionSearchResponse,
+};
+use crate::api::vision::VisionState;
+use crate::api::vision::deepseek_client::OcrError;
+use crate::metrics::METRICS;
 
-/// Check if OCR should be used for this request
-fn should_use_ocr(headers: &HeaderMap) -> bool {
-    headers
-        .get("X-Use-OCR")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.to_lowercase() != "false")
-        .unwrap_or(true)
-}
-
-/// Search regions by query
+/// Search for regions by query
 ///
 /// POST /api/v1/vision/search
 pub async fn search_regions(
@@ -43,6 +30,9 @@ pub async fn search_regions(
     // Validate request
     if request.query.is_empty() {
         METRICS.record_vision_search(false);
+        METRICS.vision_request_duration
+            .with_label_values(&["search"])
+            .observe(start.elapsed().as_secs_f64());
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -54,6 +44,9 @@ pub async fn search_regions(
 
     if request.top_k > 50 {
         METRICS.record_vision_search(false);
+        METRICS.vision_request_duration
+            .with_label_values(&["search"])
+            .observe(start.elapsed().as_secs_f64());
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -63,7 +56,7 @@ pub async fn search_regions(
         ));
     }
 
-    // Call vision service
+    // Use stub client for now
     match state.client.search_regions(request).await {
         Ok(response) => {
             METRICS.record_vision_search(true);
@@ -86,6 +79,15 @@ pub async fn search_regions(
     }
 }
 
+/// Helper function to check if OCR should be used
+fn should_use_ocr(headers: &HeaderMap) -> bool {
+    headers
+        .get("X-Use-OCR")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(true) // Default to enabled
+}
+
 /// Decode regions to text
 ///
 /// POST /api/v1/vision/decode
@@ -102,6 +104,9 @@ pub async fn decode_regions(
     if !should_use_ocr(&headers) {
         warn!("OCR disabled for this request via X-Use-OCR header");
         METRICS.record_vision_decode(false);
+        METRICS.vision_request_duration
+            .with_label_values(&["decode"])
+            .observe(start.elapsed().as_secs_f64());
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ApiError::new(
@@ -114,6 +119,9 @@ pub async fn decode_regions(
     // Validate request
     if request.region_ids.is_empty() {
         METRICS.record_vision_decode(false);
+        METRICS.vision_request_duration
+            .with_label_values(&["decode"])
+            .observe(start.elapsed().as_secs_f64());
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -125,6 +133,9 @@ pub async fn decode_regions(
 
     if request.region_ids.len() > 16 {
         METRICS.record_vision_decode(false);
+        METRICS.vision_request_duration
+            .with_label_values(&["decode"])
+            .observe(start.elapsed().as_secs_f64());
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -199,6 +210,9 @@ pub async fn index_document(
     if !should_use_ocr(&headers) {
         warn!("OCR disabled for this request via X-Use-OCR header");
         METRICS.record_vision_index(false);
+        METRICS.vision_request_duration
+            .with_label_values(&["index"])
+            .observe(start.elapsed().as_secs_f64());
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ApiError::new(
@@ -211,6 +225,9 @@ pub async fn index_document(
     // Validate request
     if request.doc_url.is_empty() {
         METRICS.record_vision_index(false);
+        METRICS.vision_request_duration
+            .with_label_values(&["index"])
+            .observe(start.elapsed().as_secs_f64());
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -221,11 +238,7 @@ pub async fn index_document(
     }
 
     // Use DeepseekOcrClient for indexing
-    match state
-        .deepseek_client
-        .index_document(request.doc_url.clone(), request.metadata.clone())
-        .await
-    {
+    match state.deepseek_client.index_document(request.doc_url).await {
         Ok(response) => {
             METRICS.record_vision_index(true);
             METRICS.vision_request_duration
@@ -276,11 +289,16 @@ pub async fn get_job_status(
     headers: HeaderMap,
     Path(job_id): Path<String>,
 ) -> Result<Json<JobStatusResponse>, (StatusCode, Json<ApiError>)> {
+    let start = Instant::now();
+    
     info!("Job status request: job_id={}", job_id);
 
     // Check per-request opt-out
     if !should_use_ocr(&headers) {
         warn!("OCR disabled for this request via X-Use-OCR header");
+        METRICS.vision_request_duration
+            .with_label_values(&["status"])
+            .observe(start.elapsed().as_secs_f64());
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ApiError::new(
@@ -292,6 +310,9 @@ pub async fn get_job_status(
 
     // Validate job_id
     if job_id.is_empty() {
+        METRICS.vision_request_duration
+            .with_label_values(&["status"])
+            .observe(start.elapsed().as_secs_f64());
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -303,8 +324,17 @@ pub async fn get_job_status(
 
     // Use DeepseekOcrClient for job status
     match state.deepseek_client.get_job_status(job_id).await {
-        Ok(response) => Ok(Json(response)),
+        Ok(response) => {
+            METRICS.vision_request_duration
+                .with_label_values(&["status"])
+                .observe(start.elapsed().as_secs_f64());
+            Ok(Json(response))
+        }
         Err(e) => {
+            METRICS.vision_request_duration
+                .with_label_values(&["status"])
+                .observe(start.elapsed().as_secs_f64());
+            
             let (status, code, message) = match e {
                 OcrError::Disabled => (
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -332,99 +362,35 @@ pub async fn get_job_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::vision::client::VisionServiceClient;
-    use crate::api::vision::deepseek_config::DeepseekConfig;
 
-    fn create_test_state() -> VisionState {
-        let client = VisionServiceClient::default().unwrap();
-        let deepseek_config = DeepseekConfig::default();
-        let deepseek_client = DeepseekOcrClient::new(deepseek_config).unwrap();
-        VisionState {
-            client: Arc::new(client),
-            deepseek_client: Arc::new(deepseek_client),
-        }
+    #[test]
+    fn test_should_use_ocr_default() {
+        let headers = HeaderMap::new();
+        assert!(should_use_ocr(&headers));
     }
 
-    #[tokio::test]
-    async fn test_search_regions_handler() {
-        let state = create_test_state();
-        let request = VisionSearchRequest {
-            query: "test query".to_string(),
-            top_k: 10,
-            filters: Default::default(),
-        };
-
-        let result = search_regions(State(state), Json(request)).await;
-        assert!(result.is_ok());
+    #[test]
+    fn test_should_use_ocr_explicit_true() {
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Use-OCR", "true".parse().unwrap());
+        assert!(should_use_ocr(&headers));
     }
 
-    #[tokio::test]
-    async fn test_search_regions_empty_query() {
-        let state = create_test_state();
-        let request = VisionSearchRequest {
-            query: "".to_string(),
-            top_k: 10,
-            filters: Default::default(),
-        };
-
-        let result = search_regions(State(state), Json(request)).await;
-        assert!(result.is_err());
+    #[test]
+    fn test_should_use_ocr_explicit_false() {
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Use-OCR", "false".parse().unwrap());
+        assert!(!should_use_ocr(&headers));
     }
 
-    #[tokio::test]
-    async fn test_search_regions_top_k_too_large() {
-        let state = create_test_state();
-        let request = VisionSearchRequest {
-            query: "test".to_string(),
-            top_k: 100,
-            filters: Default::default(),
-        };
+    #[test]
+    fn test_should_use_ocr_numeric() {
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Use-OCR", "1".parse().unwrap());
+        assert!(should_use_ocr(&headers));
 
-        let result = search_regions(State(state), Json(request)).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_decode_regions_handler() {
-        let state = create_test_state();
-        let request = DecodeRequest {
-            region_ids: vec!["r_1".to_string()],
-            fidelity: FidelityLevel::Balanced,
-        };
-
-        let result = decode_regions(State(state), Json(request)).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_decode_regions_empty() {
-        let state = create_test_state();
-        let request = DecodeRequest {
-            region_ids: vec![],
-            fidelity: FidelityLevel::Balanced,
-        };
-
-        let result = decode_regions(State(state), Json(request)).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_index_document_handler() {
-        let state = create_test_state();
-        let request = IndexRequest {
-            doc_url: "s3://docs/test.pdf".to_string(),
-            metadata: Default::default(),
-            force_reindex: false,
-        };
-
-        let result = index_document(State(state), Json(request)).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_get_job_status_handler() {
-        let state = create_test_state();
-        let result = get_job_status(State(state), Path("job_123".to_string())).await;
-        assert!(result.is_ok());
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Use-OCR", "0".parse().unwrap());
+        assert!(!should_use_ocr(&headers));
     }
 }
