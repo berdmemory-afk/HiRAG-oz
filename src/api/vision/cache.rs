@@ -1,4 +1,8 @@
-//! LRU cache with TTL for decoded OCR results
+//! Cache with TTL for decoded OCR results
+//!
+//! Note: This cache uses FIFO eviction based on insertion time when capacity is exceeded,
+//! not true LRU (Least Recently Used). Entries are not promoted on read access.
+//! TTL-based expiration is checked on every get operation.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -19,7 +23,10 @@ struct CacheEntry {
     inserted_at: Instant,
 }
 
-/// LRU cache for decoded OCR results
+/// Cache for decoded OCR results with TTL and FIFO eviction
+///
+/// Eviction strategy: When capacity is exceeded, the oldest entry by insertion time is removed.
+/// This is not a true LRU cache as entries are not promoted on access.
 pub struct DecodeCache {
     entries: Arc<Mutex<HashMap<CacheKey, CacheEntry>>>,
     ttl: Duration,

@@ -121,10 +121,68 @@ impl DeepseekConfig {
             }
         }
 
+        if let Ok(val) = std::env::var("VISION_MAX_REGIONS") {
+            if let Ok(max) = val.parse() {
+                self.max_regions_per_request = max;
+            }
+        }
+
+        if let Ok(val) = std::env::var("DEEPSEEK_CACHE_TTL_SECS") {
+            if let Ok(ttl) = val.parse() {
+                self.decode_cache_ttl_secs = ttl;
+            }
+        }
+
+        if let Ok(val) = std::env::var("DEEPSEEK_CACHE_SIZE") {
+            if let Ok(size) = val.parse() {
+                self.decode_cache_max_size = size;
+            }
+        }
+
         if let Ok(val) = std::env::var("VISION_MAX_CONCURRENT_DECODES") {
             if let Ok(max) = val.parse() {
                 self.max_concurrent_decodes = max;
             }
+        }
+
+        if let Ok(val) = std::env::var("DEEPSEEK_MAX_CONCURRENT") {
+            if let Ok(max) = val.parse() {
+                self.max_concurrent_decodes = max;
+            }
+        }
+
+        if let Ok(val) = std::env::var("DEEPSEEK_MAX_RETRIES") {
+            if let Ok(retries) = val.parse() {
+                self.retry_attempts = retries;
+            }
+        }
+
+        if let Ok(val) = std::env::var("VISION_RETRY_BACKOFF_MS") {
+            if let Ok(ms) = val.parse() {
+                self.retry_backoff_ms = ms;
+            }
+        }
+
+        if let Ok(val) = std::env::var("DEEPSEEK_RETRY_BACKOFF_MS") {
+            if let Ok(ms) = val.parse() {
+                self.retry_backoff_ms = ms;
+            }
+        }
+
+        if let Ok(val) = std::env::var("DEEPSEEK_CIRCUIT_THRESHOLD") {
+            if let Ok(threshold) = val.parse() {
+                self.circuit_breaker_failures = threshold;
+            }
+        }
+
+        if let Ok(val) = std::env::var("DEEPSEEK_CIRCUIT_COOLDOWN_SECS") {
+            if let Ok(secs) = val.parse() {
+                self.circuit_breaker_reset_secs = secs;
+            }
+        }
+
+        if let Ok(val) = std::env::var("DEEPSEEK_REDACT_API_KEY") {
+            self.log_redact_text = val.to_lowercase() == "true" || val == "1";
         }
 
         self

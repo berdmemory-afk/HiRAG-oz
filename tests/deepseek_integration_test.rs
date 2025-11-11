@@ -21,7 +21,7 @@ use std::time::Duration;
 async fn test_decode_with_cache_hit() {
     let mut config = DeepseekConfig::default();
     config.enabled = true;
-    config.cache_ttl_secs = 600;
+    config.decode_cache_ttl_secs = 600;
     
     let client = DeepseekOcrClient::new(config).unwrap();
     
@@ -45,7 +45,7 @@ async fn test_decode_with_cache_hit() {
 async fn test_circuit_breaker_triggering() {
     let mut config = DeepseekConfig::default();
     config.enabled = true;
-    config.circuit_failure_threshold = 2;
+    config.circuit_breaker_failures = 2;
     
     let client = DeepseekOcrClient::new(config).unwrap();
     
@@ -191,17 +191,17 @@ fn test_batch_cache_operations() {
 fn test_config_from_env() {
     std::env::set_var("DEEPSEEK_OCR_ENABLED", "false");
     std::env::set_var("VISION_API_KEY", "test-key-123");
-    std::env::set_var("DEEPSEEK_CACHE_TTL_SECS", "300");
+    std::env::set_var("VISION_TIMEOUT_MS", "3000");
     
     let config = DeepseekConfig::default().from_env();
     
     assert!(!config.enabled);
     assert_eq!(config.api_key, Some("test-key-123".to_string()));
-    assert_eq!(config.cache_ttl_secs, 300);
+    assert_eq!(config.timeout_ms, 3000);
     
     // Cleanup
     std::env::remove_var("DEEPSEEK_OCR_ENABLED");
     std::env::remove_var("VISION_API_KEY");
-    std::env::remove_var("DEEPSEEK_CACHE_TTL_SECS");
+    std::env::remove_var("VISION_TIMEOUT_MS");
 }
 </file_path>
