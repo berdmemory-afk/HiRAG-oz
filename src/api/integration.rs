@@ -89,6 +89,8 @@ pub async fn init_vision_service(
     config: &Config,
 ) -> crate::error::Result<VisionState> {
     use crate::api::vision::client::VisionServiceConfig;
+    use crate::api::vision::deepseek_client::DeepseekOcrClient;
+    use crate::api::vision::deepseek_config::DeepseekConfig;
     use std::time::Duration;
     
     let vision_config = if let Some(ref cfg) = config.vision {
@@ -103,8 +105,14 @@ pub async fn init_vision_service(
     
     let client = VisionServiceClient::new(vision_config)?;
     
+    // Initialize DeepseekOcrClient from config
+    let deepseek_config = DeepseekConfig::from_config(config);
+    let deepseek_client = DeepseekOcrClient::new(deepseek_config)
+        .map_err(|e| crate::error::Error::Internal(format!("Failed to create DeepseekOcrClient: {}", e)))?;
+    
     Ok(VisionState {
         client: Arc::new(client),
+        deepseek_client: Arc::new(deepseek_client),
     })
 }
 

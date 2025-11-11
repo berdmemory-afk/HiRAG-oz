@@ -204,6 +204,7 @@ pub mod error_codes {
     pub const CONFLICT: &str = "CONFLICT";
     pub const TIMEOUT: &str = "TIMEOUT";
     pub const UPSTREAM_ERROR: &str = "UPSTREAM_ERROR";
+    pub const UPSTREAM_DISABLED: &str = "UPSTREAM_DISABLED";
     pub const INTERNAL_ERROR: &str = "INTERNAL_ERROR";
 }
 

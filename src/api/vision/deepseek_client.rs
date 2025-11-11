@@ -192,7 +192,13 @@ impl DeepseekOcrClient {
         let response = req
             .send()
             .await
-            .map_err(|e| OcrError::RequestFailed(e.to_string()))?;
+            .map_err(|e| {
+                if e.is_timeout() {
+                    OcrError::Timeout(e.to_string())
+                } else {
+                    OcrError::RequestFailed(e.to_string())
+                }
+            })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -255,7 +261,11 @@ impl DeepseekOcrClient {
                 METRICS.deepseek_requests
                     .with_label_values(&["index", "error"])
                     .inc();
-                OcrError::RequestFailed(e.to_string())
+                if e.is_timeout() {
+                    OcrError::Timeout(e.to_string())
+                } else {
+                    OcrError::RequestFailed(e.to_string())
+                }
             })?;
 
         let status = response.status();
@@ -316,7 +326,11 @@ impl DeepseekOcrClient {
                 METRICS.deepseek_requests
                     .with_label_values(&["status", "error"])
                     .inc();
-                OcrError::RequestFailed(e.to_string())
+                if e.is_timeout() {
+                    OcrError::Timeout(e.to_string())
+                } else {
+                    OcrError::RequestFailed(e.to_string())
+                }
             })?;
 
         let status = response.status();
@@ -352,8 +366,8 @@ impl DeepseekOcrClient {
     /// Calculate exponential backoff
     fn calculate_backoff(&self, attempt: usize) -> Duration {
         let base = self.config.retry_backoff();
-        let multiplier = 2_u64.pow((attempt - 1) as u32);
-        base * multiplier
+        let multiplier = 2_u32.pow((attempt - 1) as u32);
+        base.saturating_mul(multiplier)
     }
 
     /// Get cache statistics

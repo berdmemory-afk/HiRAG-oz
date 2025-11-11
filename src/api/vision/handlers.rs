@@ -21,7 +21,7 @@ pub struct VisionState {
 }
 
 /// Check if OCR should be used for this request
-fn should_use_ocr(headers: &amp;HeaderMap) -> bool {
+fn should_use_ocr(headers: &HeaderMap) -> bool {
     headers
         .get("X-Use-OCR")
         .and_then(|v| v.to_str().ok())
@@ -99,7 +99,7 @@ pub async fn decode_regions(
     info!("Vision decode request: {} regions", request.region_ids.len());
 
     // Check per-request opt-out
-    if !should_use_ocr(&amp;headers) {
+    if !should_use_ocr(&headers) {
         warn!("OCR disabled for this request via X-Use-OCR header");
         METRICS.record_vision_decode(false);
         return Err((
@@ -196,7 +196,7 @@ pub async fn index_document(
     info!("Vision index request: doc_url={}", request.doc_url);
 
     // Check per-request opt-out
-    if !should_use_ocr(&amp;headers) {
+    if !should_use_ocr(&headers) {
         warn!("OCR disabled for this request via X-Use-OCR header");
         METRICS.record_vision_index(false);
         return Err((
@@ -220,8 +220,12 @@ pub async fn index_document(
         ));
     }
 
-    // Call vision service
-    match state.client.index_document(request).await {
+    // Use DeepseekOcrClient for indexing
+    match state
+        .deepseek_client
+        .index_document(request.doc_url.clone(), request.metadata.clone())
+        .await
+    {
         Ok(response) => {
             METRICS.record_vision_index(true);
             METRICS.vision_request_duration
@@ -234,11 +238,32 @@ pub async fn index_document(
             METRICS.vision_request_duration
                 .with_label_values(&["index"])
                 .observe(start.elapsed().as_secs_f64());
-            error!("Vision index failed: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(error_codes::INTERNAL_ERROR, e.to_string())),
-            ))
+
+            let (status, code, message) = match e {
+                OcrError::Disabled => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    error_codes::UPSTREAM_DISABLED,
+                    "OCR service is disabled".to_string(),
+                ),
+                OcrError::CircuitOpen(_) => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    error_codes::UPSTREAM_ERROR,
+                    e.to_string(),
+                ),
+                OcrError::Timeout(_) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    error_codes::TIMEOUT,
+                    e.to_string(),
+                ),
+                _ => (
+                    StatusCode::BAD_GATEWAY,
+                    error_codes::UPSTREAM_ERROR,
+                    e.to_string(),
+                ),
+            };
+
+            error!("Vision index failed: {}", message);
+            Err((status, Json(ApiError::new(code, message))))
         }
     }
 }
@@ -263,15 +288,30 @@ pub async fn get_job_status(
         ));
     }
 
-    // Call vision service
-    match state.client.get_job_status(&job_id).await {
+    // Use DeepseekOcrClient for job status
+    match state.deepseek_client.get_job_status(job_id).await {
         Ok(response) => Ok(Json(response)),
         Err(e) => {
-            error!("Job status check failed: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(error_codes::INTERNAL_ERROR, e.to_string())),
-            ))
+            let (status, code, message) = match e {
+                OcrError::Disabled => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    error_codes::UPSTREAM_DISABLED,
+                    "OCR service is disabled".to_string(),
+                ),
+                OcrError::Timeout(_) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    error_codes::TIMEOUT,
+                    e.to_string(),
+                ),
+                _ => (
+                    StatusCode::BAD_GATEWAY,
+                    error_codes::UPSTREAM_ERROR,
+                    e.to_string(),
+                ),
+            };
+
+            error!("Job status check failed: {}", message);
+            Err((status, Json(ApiError::new(code, message))))
         }
     }
 }
@@ -280,11 +320,15 @@ pub async fn get_job_status(
 mod tests {
     use super::*;
     use crate::api::vision::client::VisionServiceClient;
+    use crate::api::vision::deepseek_config::DeepseekConfig;
 
     fn create_test_state() -> VisionState {
         let client = VisionServiceClient::default().unwrap();
+        let deepseek_config = DeepseekConfig::default();
+        let deepseek_client = DeepseekOcrClient::new(deepseek_config).unwrap();
         VisionState {
             client: Arc::new(client),
+            deepseek_client: Arc::new(deepseek_client),
         }
     }
 
