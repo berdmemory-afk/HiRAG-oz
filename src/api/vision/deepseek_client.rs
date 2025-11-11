@@ -108,6 +108,9 @@ impl DeepseekOcrClient {
             METRICS.deepseek_requests
                 .with_label_values(&["decode", "disabled"])
                 .inc();
+            METRICS.deepseek_request_duration
+                .with_label_values(&["decode"])
+                .observe(start.elapsed().as_secs_f64());
             return Err(OcrError::Disabled);
         }
 
@@ -134,6 +137,9 @@ impl DeepseekOcrClient {
         // Check circuit breaker
         if self.breaker.is_open("decode") {
             METRICS.deepseek_circuit_open.with_label_values(&["decode"]).inc();
+            METRICS.deepseek_request_duration
+                .with_label_values(&["decode"])
+                .observe(start.elapsed().as_secs_f64());
             error!("Circuit breaker is open for decode operation");
             return Err(OcrError::CircuitOpen("decode".to_string()));
         }

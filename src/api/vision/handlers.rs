@@ -3,6 +3,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{error, info, warn};
 
@@ -12,9 +13,16 @@ use crate::api::vision::models::{
     DecodeRequest, DecodeResponse, IndexRequest, IndexResponse, JobStatusResponse,
     VisionSearchRequest, VisionSearchResponse,
 };
-use crate::api::vision::VisionState;
+use crate::api::vision::{VisionServiceClient, DeepseekOcrClient};
 use crate::api::vision::deepseek_client::OcrError;
 use crate::metrics::METRICS;
+
+/// Vision API state
+#[derive(Clone)]
+pub struct VisionState {
+    pub client: Arc<VisionServiceClient>,
+    pub deepseek_client: Arc<DeepseekOcrClient>,
+}
 
 /// Search for regions by query
 ///
@@ -84,7 +92,10 @@ fn should_use_ocr(headers: &HeaderMap) -> bool {
     headers
         .get("X-Use-OCR")
         .and_then(|v| v.to_str().ok())
-        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .map(|v| {
+            let v = v.to_ascii_lowercase();
+            v == "true" || v == "1" || v == "yes" || v == "on"
+        })
         .unwrap_or(true) // Default to enabled
 }
 
@@ -238,7 +249,19 @@ pub async fn index_document(
     }
 
     // Use DeepseekOcrClient for indexing
-    match state.deepseek_client.index_document(request.doc_url).await {
+    // Convert HashMap<String, String> to Option<Map<String, Value>>
+    let metadata = if request.metadata.is_empty() {
+        None
+    } else {
+        Some(
+            request.metadata
+                .into_iter()
+                .map(|(k, v)| (k, serde_json::Value::String(v)))
+                .collect()
+        )
+    };
+    
+    match state.deepseek_client.index_document(request.doc_url, metadata).await {
         Ok(response) => {
             METRICS.record_vision_index(true);
             METRICS.vision_request_duration

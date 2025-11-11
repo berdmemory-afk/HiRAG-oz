@@ -14,7 +14,7 @@ pub mod circuit_breaker;
 pub mod deepseek_config;
 pub mod deepseek_client;
 
-pub use handlers::{search_regions, decode_regions, index_document, get_job_status};
+pub use handlers::{search_regions, decode_regions, index_document, get_job_status, VisionState};
 pub use models::{
     VisionSearchRequest, VisionSearchResponse, DecodeRequest, DecodeResponse,
     IndexRequest, IndexResponse, JobStatus, Region, BoundingBox, FidelityLevel,
