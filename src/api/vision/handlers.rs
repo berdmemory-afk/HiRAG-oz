@@ -1,21 +1,32 @@
 //! Vision API handlers
 
 use super::client::VisionServiceClient;
+use super::deepseek_client::{DeepseekOcrClient, OcrError};
 use super::models::*;
 use crate::metrics::METRICS;
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Application state for vision handlers
 #[derive(Clone)]
 pub struct VisionState {
     pub client: Arc<VisionServiceClient>,
+    pub deepseek_client: Arc<DeepseekOcrClient>,
+}
+
+/// Check if OCR should be used for this request
+fn should_use_ocr(headers: &amp;HeaderMap) -> bool {
+    headers
+        .get("X-Use-OCR")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_lowercase() != "false")
+        .unwrap_or(true)
 }
 
 /// Search regions by query
@@ -80,11 +91,25 @@ pub async fn search_regions(
 /// POST /api/v1/vision/decode
 pub async fn decode_regions(
     State(state): State<VisionState>,
+    headers: HeaderMap,
     Json(request): Json<DecodeRequest>,
 ) -> Result<Json<DecodeResponse>, (StatusCode, Json<ApiError>)> {
     let start = Instant::now();
     
     info!("Vision decode request: {} regions", request.region_ids.len());
+
+    // Check per-request opt-out
+    if !should_use_ocr(&amp;headers) {
+        warn!("OCR disabled for this request via X-Use-OCR header");
+        METRICS.record_vision_decode(false);
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiError::new(
+                error_codes::UPSTREAM_DISABLED,
+                "OCR disabled for this request",
+            )),
+        ));
+    }
 
     // Validate request
     if request.region_ids.is_empty() {
@@ -114,25 +139,46 @@ pub async fn decode_regions(
     //     region.bbox.validate(region.page_width, region.page_height)?;
     // }
 
-    // Call vision service
-    match state.client.decode_regions(request).await {
-        Ok(response) => {
+    // Use DeepSeek OCR client
+    match state.deepseek_client.decode_regions(request.region_ids, request.fidelity).await {
+        Ok(results) => {
             METRICS.record_vision_decode(true);
             METRICS.vision_request_duration
                 .with_label_values(&["decode"])
                 .observe(start.elapsed().as_secs_f64());
-            Ok(Json(response))
+            Ok(Json(DecodeResponse { results }))
         }
         Err(e) => {
             METRICS.record_vision_decode(false);
             METRICS.vision_request_duration
                 .with_label_values(&["decode"])
                 .observe(start.elapsed().as_secs_f64());
-            error!("Vision decode failed: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(error_codes::INTERNAL_ERROR, e.to_string())),
-            ))
+            
+            let (status, code, message) = match e {
+                OcrError::Disabled => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    error_codes::UPSTREAM_DISABLED,
+                    "Vision OCR integration is disabled".to_string()
+                ),
+                OcrError::CircuitOpen(op) => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    error_codes::UPSTREAM_ERROR,
+                    format!("Circuit breaker is open for {}", op)
+                ),
+                OcrError::Timeout(msg) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    error_codes::TIMEOUT,
+                    msg
+                ),
+                _ => (
+                    StatusCode::BAD_GATEWAY,
+                    error_codes::UPSTREAM_ERROR,
+                    e.to_string()
+                ),
+            };
+            
+            error!("Vision decode failed: {}", message);
+            Err((status, Json(ApiError::new(code, message))))
         }
     }
 }
@@ -142,11 +188,25 @@ pub async fn decode_regions(
 /// POST /api/v1/vision/index
 pub async fn index_document(
     State(state): State<VisionState>,
+    headers: HeaderMap,
     Json(request): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, (StatusCode, Json<ApiError>)> {
     let start = Instant::now();
     
     info!("Vision index request: doc_url={}", request.doc_url);
+
+    // Check per-request opt-out
+    if !should_use_ocr(&amp;headers) {
+        warn!("OCR disabled for this request via X-Use-OCR header");
+        METRICS.record_vision_index(false);
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiError::new(
+                error_codes::UPSTREAM_DISABLED,
+                "OCR disabled for this request",
+            )),
+        ));
+    }
 
     // Validate request
     if request.doc_url.is_empty() {
