@@ -9,6 +9,10 @@
 pub mod handlers;
 pub mod models;
 pub mod client;
+pub mod cache;
+pub mod circuit_breaker;
+pub mod deepseek_config;
+pub mod deepseek_client;
 
 pub use handlers::{search_regions, decode_regions, index_document, get_job_status};
 pub use models::{
@@ -16,3 +20,5 @@ pub use models::{
     IndexRequest, IndexResponse, JobStatus, Region, BoundingBox, FidelityLevel,
 };
 pub use client::VisionServiceClient;
+pub use deepseek_client::DeepseekOcrClient;
+pub use deepseek_config::DeepseekConfig;

@@ -42,6 +42,13 @@ pub struct Metrics {
     // Context management metrics
     pub context_retrievals: Counter,
     pub context_storage: Counter,
+
+    // DeepSeek OCR metrics
+    pub deepseek_requests: CounterVec,
+    pub deepseek_request_duration: HistogramVec,
+    pub deepseek_cache_hits: Counter,
+    pub deepseek_cache_misses: Counter,
+    pub deepseek_circuit_open: CounterVec,
 }
 
 impl Metrics {
@@ -147,6 +154,36 @@ impl Metrics {
             registry
         )?;
         
+        // DeepSeek OCR metrics
+        let deepseek_requests = register_counter_vec_with_registry!(
+            Opts::new("deepseek_requests_total", "Total DeepSeek OCR requests"),
+            &["op", "status"],
+            registry
+        )?;
+
+        let deepseek_request_duration = register_histogram_vec_with_registry!(
+            "deepseek_request_duration_seconds",
+            "DeepSeek OCR request duration in seconds",
+            &["op"],
+            registry
+        )?;
+
+        let deepseek_cache_hits = register_counter_with_registry!(
+            Opts::new("deepseek_cache_hits_total", "Total DeepSeek cache hits"),
+            registry
+        )?;
+
+        let deepseek_cache_misses = register_counter_with_registry!(
+            Opts::new("deepseek_cache_misses_total", "Total DeepSeek cache misses"),
+            registry
+        )?;
+
+        let deepseek_circuit_open = register_counter_vec_with_registry!(
+            Opts::new("deepseek_circuit_open_total", "Total DeepSeek circuit breaker opens"),
+            &["op"],
+            registry
+        )?;
+        
         Ok(Self {
             registry,
             vision_search_requests,
@@ -165,6 +202,11 @@ impl Metrics {
             rate_limit_allowed,
             context_retrievals,
             context_storage,
+            deepseek_requests,
+            deepseek_request_duration,
+            deepseek_cache_hits,
+            deepseek_cache_misses,
+            deepseek_circuit_open,
         })
     }
     
