@@ -173,7 +173,7 @@ async fn rate_limit_middleware(
             let mut response = next.run(req).await;
             
             // Add rate limit headers
-            if let Some((count, _elapsed)) = rate_limiter.get_usage(&client_id).await {
+            if let Some((count, elapsed)) = rate_limiter.get_usage(&client_id).await {
                 let stats = rate_limiter.stats().await;
                 let limit = stats.config.max_requests;
                 let remaining = limit.saturating_sub(count);
@@ -184,8 +184,8 @@ async fn rate_limit_middleware(
                 if let Ok(remaining_val) = HeaderValue::from_str(&remaining.to_string()) {
                     response.headers_mut().insert("X-RateLimit-Remaining", remaining_val);
                 }
-                // Reset time is window_duration from now
-                let reset_secs = stats.config.window_duration.as_secs();
+                // Reset time is seconds remaining until window resets
+                let reset_secs = stats.config.window_duration.saturating_sub(elapsed).as_secs();
                 if let Ok(reset_val) = HeaderValue::from_str(&reset_secs.to_string()) {
                     response.headers_mut().insert("X-RateLimit-Reset", reset_val);
                 }

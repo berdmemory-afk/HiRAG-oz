@@ -90,7 +90,7 @@ impl DeepseekOcrClient {
         }
 
         // Check cache
-        let (hits, misses) = self.cache.split_hits(&region_ids, &fidelity);
+        let (hits, mut misses) = self.cache.split_hits(&region_ids, &fidelity);
         METRICS.deepseek_cache_hits.inc_by(hits.len() as f64);
         METRICS.deepseek_cache_misses.inc_by(misses.len() as f64);
 
@@ -119,46 +119,58 @@ impl DeepseekOcrClient {
         // Acquire semaphore for concurrency control
         let _permit = self.semaphore.acquire().await.unwrap();
 
-        // Retry with exponential backoff
-        let mut attempt = 0;
-        let decoded = loop {
-            attempt += 1;
+        // Batch by max_regions_per_request to avoid overwhelming upstream
+        let mut decoded_all = Vec::new();
+        while !misses.is_empty() {
+            let batch: Vec<String> = misses
+                .drain(..misses.len().min(self.config.max_regions_per_request))
+                .collect();
 
-            match self.call_decode_api(&misses, &fidelity).await {
-                Ok(results) => {
-                    self.breaker.mark_success("decode");
-                    METRICS.deepseek_requests
-                        .with_label_values(&["decode", "success"])
-                        .inc();
-                    break results;
-                }
-                Err(e) => {
-                    self.breaker.mark_failure("decode");
-                    METRICS.deepseek_requests
-                        .with_label_values(&["decode", "error"])
-                        .inc();
+            debug!("Processing batch of {} regions", batch.len());
 
-                    if attempt > self.config.retry_attempts {
-                        error!("Decode failed after {} attempts: {}", attempt, e);
-                        return Err(e);
+            // Retry with exponential backoff for this batch
+            let mut attempt = 0;
+            let decoded = loop {
+                attempt += 1;
+
+                match self.call_decode_api(&batch, &fidelity).await {
+                    Ok(results) => {
+                        self.breaker.mark_success("decode");
+                        METRICS.deepseek_requests
+                            .with_label_values(&["decode", "success"])
+                            .inc();
+                        break results;
                     }
+                    Err(e) => {
+                        self.breaker.mark_failure("decode");
+                        METRICS.deepseek_requests
+                            .with_label_values(&["decode", "error"])
+                            .inc();
 
-                    let backoff = self.calculate_backoff(attempt);
-                    warn!(
-                        "Decode attempt {} failed: {}, retrying in {:?}",
-                        attempt, e, backoff
-                    );
-                    tokio::time::sleep(backoff).await;
+                        if attempt > self.config.retry_attempts {
+                            error!("Decode batch failed after {} attempts: {}", attempt, e);
+                            // Fail the entire call if any batch fails
+                            return Err(e);
+                        }
+
+                        let backoff = self.calculate_backoff(attempt);
+                        warn!(
+                            "Decode batch attempt {} failed: {}, retrying in {:?}",
+                            attempt, e, backoff
+                        );
+                        tokio::time::sleep(backoff).await;
+                    }
                 }
-            }
-        };
+            };
 
-        // Store in cache
-        self.cache.store_batch(&decoded, &fidelity);
+            // Store this batch in cache
+            self.cache.store_batch(&decoded, &fidelity);
+            decoded_all.extend(decoded);
+        }
 
-        // Combine hits and newly decoded
+        // Combine hits and all newly decoded results
         let mut results = hits;
-        results.extend(decoded);
+        results.extend(decoded_all);
 
         METRICS.deepseek_request_duration
             .with_label_values(&["decode"])
@@ -335,6 +347,7 @@ impl DeepseekOcrClient {
 
         let status = response.status();
         if !status.is_success() {
+            self.breaker.mark_failure("status");
             METRICS.deepseek_requests
                 .with_label_values(&["status", "error"])
                 .inc();
@@ -347,6 +360,8 @@ impl DeepseekOcrClient {
                 status, error_text
             )));
         }
+
+        self.breaker.mark_success("status");
 
         let job_response: JobStatusResponse = response
             .json()

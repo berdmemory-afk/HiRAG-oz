@@ -59,6 +59,9 @@ pub struct DeepseekConfig {
     pub circuit_breaker_reset_secs: u64,
 
     /// Redact OCR text from logs
+    ///
+    /// Note: By design, decoded OCR text is never logged by the client.
+    /// This flag is reserved for future use if logging is added.
     #[serde(default = "default_log_redact")]
     pub log_redact_text: bool,
 }

@@ -7,11 +7,11 @@
 //! These tests serve as documentation of expected behavior
 //! and will be enabled once a mock server is implemented.
 
-use hirag_oz::api::vision::cache::DecodeCache;
-use hirag_oz::api::vision::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
-use hirag_oz::api::vision::deepseek_client::{DeepseekOcrClient, OcrError};
-use hirag_oz::api::vision::deepseek_config::DeepseekConfig;
-use hirag_oz::api::vision::models::*;
+use context_manager::api::vision::cache::DecodeCache;
+use context_manager::api::vision::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+use context_manager::api::vision::deepseek_client::{DeepseekOcrClient, OcrError};
+use context_manager::api::vision::deepseek_config::DeepseekConfig;
+use context_manager::api::vision::models::*;
 use std::sync::Arc;
 use std::time::Duration;
 
