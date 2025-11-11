@@ -273,9 +273,22 @@ pub async fn index_document(
 /// GET /api/v1/vision/index/jobs/{job_id}
 pub async fn get_job_status(
     State(state): State<VisionState>,
+    headers: HeaderMap,
     Path(job_id): Path<String>,
 ) -> Result<Json<JobStatusResponse>, (StatusCode, Json<ApiError>)> {
     info!("Job status request: job_id={}", job_id);
+
+    // Check per-request opt-out
+    if !should_use_ocr(&headers) {
+        warn!("OCR disabled for this request via X-Use-OCR header");
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiError::new(
+                error_codes::UPSTREAM_DISABLED,
+                "OCR disabled for this request",
+            )),
+        ));
+    }
 
     // Validate job_id
     if job_id.is_empty() {

@@ -105,8 +105,8 @@ pub async fn init_vision_service(
     
     let client = VisionServiceClient::new(vision_config)?;
     
-    // Initialize DeepseekOcrClient from config
-    let deepseek_config = DeepseekConfig::from_config(config);
+    // Initialize DeepseekOcrClient from environment variables
+    let deepseek_config = DeepseekConfig::default().from_env();
     let deepseek_client = DeepseekOcrClient::new(deepseek_config)
         .map_err(|e| crate::error::Error::Internal(format!("Failed to create DeepseekOcrClient: {}", e)))?;
     

@@ -365,9 +365,12 @@ impl DeepseekOcrClient {
 
     /// Calculate exponential backoff
     fn calculate_backoff(&self, attempt: usize) -> Duration {
-        let base = self.config.retry_backoff();
-        let multiplier = 2_u32.pow((attempt - 1) as u32);
-        base.saturating_mul(multiplier)
+        // attempt: 1 -> base, 2 -> base*2, 3 -> base*4
+        let base_ms = self.config.retry_backoff_ms; // u64 field on DeepseekConfig
+        let shift = attempt.saturating_sub(1) as u32;
+        let mul = 1u64.saturating_shl(shift);
+        let delay_ms = base_ms.saturating_mul(mul);
+        Duration::from_millis(delay_ms)
     }
 
     /// Get cache statistics
