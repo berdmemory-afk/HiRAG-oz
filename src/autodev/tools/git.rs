@@ -82,14 +82,30 @@ impl Tool for GitTool {
         let patch_file = ctx.workdir.join("temp.patch");
         tokio::fs::write(&patch_file, &input.patch).await?;
         
-        self.run_git_command(&["apply", patch_file.to_str().unwrap()], &ctx.workdir).await?;
+        // Try to apply patch with fallback strategies
+        let apply_result = self.run_git_command(&["apply", "--reject", patch_file.to_str().unwrap()], &ctx.workdir).await;
+        
+        if apply_result.is_err() {
+            // Try with -p1 if initial apply failed
+            debug!("Trying patch apply with -p1");
+            self.run_git_command(&["apply", "--reject", "-p1", patch_file.to_str().unwrap()], &ctx.workdir).await?;
+        }
         
         // Stage all changes
         self.run_git_command(&["add", "-A"], &ctx.workdir).await?;
         
+        // Check if there are changes to commit
+        let status_output = self.run_git_command(&["status", "--porcelain"], &ctx.workdir).await?;
+        
+        if status_output.trim().is_empty() {
+            info!("No changes to commit after applying patch");
+            return Err(ToolError::Git("No changes to commit (patch may have already been applied)".to_string()));
+        }
+        
         // Commit
         let commit_msg = input.commit_message.unwrap_or_else(|| "AutoDev: Apply changes".to_string());
-        self.run_git_command(&["commit", "-m", &commit_msg], &ctx.workdir).await?;
+        self.run_git_command(&["commit", "-m", &commit_msg], &ctx.workdir).await
+            .map_err(|e| ToolError::Git(format!("Commit failed: {}", e)))?;
         
         // Get commit hash
         let commit = self.run_git_command(&["rev-parse", "HEAD"], &ctx.workdir).await?;

@@ -26,6 +26,17 @@ impl RepoSearchTool {
     ) -> Result<Vec<SearchMatch>, ToolError> {
         debug!("Searching for pattern: {}", pattern);
         
+        // Check if ripgrep is available
+        let rg_check = Command::new("which")
+            .arg("rg")
+            .output()
+            .await?;
+        
+        if !rg_check.status.success() {
+            debug!("ripgrep not found, falling back to grep");
+            return self.search_with_grep(pattern, workdir).await;
+        }
+        
         let output = Command::new("rg")
             .args(&[
                 "--json",
@@ -92,6 +103,52 @@ impl RepoSearchTool {
         }
         
         info!("Found {} matches", matches.len());
+        
+        Ok(matches)
+    }
+    
+    /// Fallback search using grep
+    async fn search_with_grep(
+        &self,
+        pattern: &str,
+        workdir: &std::path::Path,
+    ) -> Result<Vec<SearchMatch>, ToolError> {
+        let output = Command::new("grep")
+            .args(&[
+                "-r",
+                "-n",
+                "--line-number",
+                pattern,
+                ".",
+            ])
+            .current_dir(workdir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await?;
+        
+        if !output.status.success() && output.status.code() != Some(1) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ToolError::Exec(stderr.to_string()));
+        }
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut matches = Vec::new();
+        
+        for line in stdout.lines().take(self.max_results) {
+            // Parse grep output: file:line:text
+            let parts: Vec<&str> = line.splitn(3, ':').collect();
+            if parts.len() == 3 {
+                if let Ok(line_num) = parts[1].parse::<u32>() {
+                    matches.push(SearchMatch {
+                        file: parts[0].to_string(),
+                        line: line_num,
+                        text: parts[2].to_string(),
+                        context: None,
+                    });
+                }
+            }
+        }
         
         Ok(matches)
     }

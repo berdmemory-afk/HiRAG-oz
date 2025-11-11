@@ -68,6 +68,9 @@ tower-http = { version = "0.6.6", features = ["trace", "limit"] }
 tower = "0.5.2"
 lazy_static = "1.4"
 
+# Pattern matching
+glob = "0.3"
+
 [dev-dependencies]
 mockito = "1.2"
 criterion = "0.5"

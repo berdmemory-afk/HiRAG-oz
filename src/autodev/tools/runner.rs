@@ -23,6 +23,23 @@ impl RunnerTool {
         }
     }
     
+    /// Check if Docker is available
+    async fn check_docker() -> Result<(), ToolError> {
+        let output = Command::new("which")
+            .arg("docker")
+            .output()
+            .await
+            .map_err(|e| ToolError::Exec(format!("Failed to check for docker: {}", e)))?;
+        
+        if !output.status.success() {
+            return Err(ToolError::Exec(
+                "Docker is not installed or not in PATH. Please install Docker to use the runner tool.".to_string()
+            ));
+        }
+        
+        Ok(())
+    }
+    
     async fn run_in_docker(
         &self,
         cmd: &[String],
@@ -103,6 +120,9 @@ impl Tool for RunnerTool {
         if input.cmd.is_empty() {
             return Err(ToolError::Invalid("Command cannot be empty".to_string()));
         }
+        
+        // Check Docker availability
+        Self::check_docker().await?;
         
         let timeout_secs = input.timeout_override.unwrap_or(self.timeout_secs);
         let timeout = std::time::Duration::from_secs(timeout_secs);

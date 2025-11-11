@@ -31,6 +31,11 @@ impl Orchestrator {
         }
     }
     
+    /// Get reference to configuration
+    pub fn config(&self) -> &AutodevConfig {
+        &self.config
+    }
+    
     /// Run a complete task from start to finish
     pub async fn run_task(&self, mut task: Task) -> Result<Task> {
         info!("Starting task {}: {}", task.id, task.title);
@@ -42,10 +47,10 @@ impl Orchestrator {
         task.status = TaskStatus::Planning;
         
         // Create workspace
-        let workdir = self.create_workspace(&task).await?;
+        let base = self.create_workspace(&task).await?;
         
         // Clone repository
-        self.clone_repository(&task, &workdir).await?;
+        let workdir = self.clone_repository(&task, &base).await?;
         
         // Generate plan
         task.status = TaskStatus::Planning;
@@ -68,7 +73,7 @@ impl Orchestrator {
         }
         
         // Cleanup workspace
-        if let Err(e) = fs::remove_dir_all(&workdir).await {
+        if let Err(e) = fs::remove_dir_all(&base).await {
             warn!("Failed to cleanup workspace: {}", e);
         }
         
@@ -80,27 +85,29 @@ impl Orchestrator {
     
     /// Create a workspace directory for the task
     async fn create_workspace(&self, task: &Task) -> Result<PathBuf> {
-        let workdir = std::env::temp_dir()
+        let base = std::env::temp_dir()
             .join("autodev")
             .join(task.id.to_string());
         
-        fs::create_dir_all(&workdir).await
-            .context("Failed to create workspace")?;
+        fs::create_dir_all(&base).await
+            .context("Failed to create workspace base")?;
         
-        debug!("Created workspace at {}", workdir.display());
+        debug!("Created workspace base at {}", base.display());
         
-        Ok(workdir)
+        Ok(base)
     }
     
     /// Clone the repository
-    async fn clone_repository(&self, task: &Task, workdir: &PathBuf) -> Result<()> {
+    async fn clone_repository(&self, task: &Task, base: &PathBuf) -> Result<PathBuf> {
         info!("Cloning repository {}", task.repo);
         
         let clone_tool = self.tools.get("git_clone")
             .context("git_clone tool not found")?;
         
+        let repo_dir = base.join("repo");
+        
         let ctx = ToolContext {
-            workdir: workdir.clone(),
+            workdir: repo_dir.clone(),
             repo_url: task.repo.clone(),
             base_branch: task.base_branch.clone(),
             env: std::env::vars().collect(),
@@ -116,7 +123,7 @@ impl Orchestrator {
         clone_tool.invoke(input, &ctx).await
             .context("Failed to clone repository")?;
         
-        Ok(())
+        Ok(repo_dir)
     }
     
     /// Generate execution plan for the task
@@ -218,9 +225,15 @@ impl Orchestrator {
         });
         
         // Step 8: Policy check
+        let policy_tool = if self.config.opa_url.is_some() {
+            "policy"
+        } else {
+            "policy_local"
+        };
+        
         steps.push(Step {
             name: "Check policy".to_string(),
-            tool: "policy_local".to_string(),
+            tool: policy_tool.to_string(),
             input: serde_json::json!({
                 "task_id": task.id,
                 "risk_tier": task.risk_tier,
@@ -342,14 +355,24 @@ impl Orchestrator {
         
         // Special handling for policy - build complete input
         if step.tool == "policy_local" || step.tool == "policy" {
-            input = self.build_policy_input(ctx, outputs)?;
+            input = self.build_policy_input(ctx, outputs).await?;
+        }
+        
+        // Special handling for git_pr - track PR metrics
+        if step.tool == "git_pr" {
+            let result = tool.invoke(input, ctx).await?;
+            if let Some(pr_url) = result.get("pr_url").and_then(|v| v.as_str()) {
+                AUTODEV_METRICS.prs_opened.inc();
+                info!("PR created: {}", pr_url);
+            }
+            return Ok(result);
         }
         
         tool.invoke(input, ctx).await
     }
     
     /// Build policy input from collected data
-    fn build_policy_input(
+    async fn build_policy_input(
         &self,
         ctx: &ToolContext,
         outputs: &HashMap<String, serde_json::Value>,
@@ -379,16 +402,55 @@ impl Orchestrator {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         
+        // Get files changed from git diff
+        let files_changed = self.get_files_changed(&ctx.workdir).await
+            .unwrap_or_default();
+        
+        // Get new dependencies
+        let new_dependencies = outputs
+            .get("Check dependencies")
+            .and_then(|v| v.get("new_dependencies"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        
         Ok(serde_json::json!({
             "task_id": ctx.task_id,
             "risk_tier": "low",
             "diff": patch,
-            "files_changed": [],
-            "new_dependencies": [],
+            "files_changed": files_changed,
+            "new_dependencies": new_dependencies,
             "clippy_warnings": clippy_warnings,
             "tests_passed": tests_passed,
             "secrets_found": secrets_found,
         }))
+    }
+    
+    /// Get list of changed files from git
+    async fn get_files_changed(&self, workdir: &std::path::Path) -> Result<Vec<String>, ToolError> {
+        use tokio::process::Command;
+        
+        let output = Command::new("git")
+            .args(&["diff", "--name-only", "HEAD"])
+            .current_dir(workdir)
+            .output()
+            .await
+            .map_err(|e| ToolError::Git(e.to_string()))?;
+        
+        if !output.status.success() {
+            return Ok(vec![]);
+        }
+        
+        let files = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|s| s.to_string())
+            .collect();
+        
+        Ok(files)
     }
 }
 

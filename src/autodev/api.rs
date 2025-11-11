@@ -21,13 +21,17 @@ use uuid::Uuid;
 pub struct AutodevState {
     pub orchestrator: Arc<Orchestrator>,
     pub tasks: Arc<RwLock<HashMap<Uuid, Task>>>,
+    pub permits: Arc<tokio::sync::Semaphore>,
 }
 
 /// Build autodev API routes
 pub fn build_autodev_routes(orchestrator: Arc<Orchestrator>) -> Router {
+    let max_parallel = orchestrator.config().max_parallel_tasks;
+    
     let state = AutodevState {
         orchestrator,
         tasks: Arc::new(RwLock::new(HashMap::new())),
+        permits: Arc::new(tokio::sync::Semaphore::new(max_parallel)),
     };
     
     Router::new()
@@ -38,12 +42,41 @@ pub fn build_autodev_routes(orchestrator: Arc<Orchestrator>) -> Router {
         .with_state(state)
 }
 
+/// Check if repository is in allowlist
+fn repo_allowed(allowlist: &[String], repo_url: &str) -> bool {
+    if allowlist.is_empty() {
+        return true; // No allowlist means all repos allowed
+    }
+    
+    let repo = repo_url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_start_matches("git@")
+        .trim_end_matches(".git");
+    
+    allowlist.iter().any(|pattern| {
+        glob::Pattern::new(pattern)
+            .map(|p| p.matches(repo))
+            .unwrap_or(false)
+    })
+}
+
 /// Create a new task
 async fn create_task(
     State(state): State<AutodevState>,
     Json(request): Json<CreateTaskRequest>,
 ) -> Result<Json<Task>, (StatusCode, String)> {
     info!("Creating new task: {}", request.title);
+    
+    // Check repository allowlist
+    let allowlist = &state.orchestrator.config().allowlist_repos;
+    if !repo_allowed(allowlist, &request.repo) {
+        error!("Repository {} not in allowlist", request.repo);
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("Repository {} is not in the allowlist", request.repo),
+        ));
+    }
     
     let task = Task {
         id: Uuid::new_v4(),
@@ -66,12 +99,18 @@ async fn create_task(
         tasks.insert(task.id, task.clone());
     }
     
+    // Acquire permit for concurrency control
+    let permit = state.permits.clone().acquire_owned().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    
     // Spawn task execution in background
     let orchestrator = state.orchestrator.clone();
     let tasks_map = state.tasks.clone();
     let task_id = task.id;
     
     tokio::spawn(async move {
+        let _permit = permit; // Hold permit until task completes
+        
         match orchestrator.run_task(task).await {
             Ok(completed_task) => {
                 let mut tasks = tasks_map.write().await;
