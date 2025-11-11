@@ -46,6 +46,28 @@ pub struct DeepseekOcrClient {
 impl DeepseekOcrClient {
     /// Create a new DeepSeek OCR client
     pub fn new(config: DeepseekConfig) -> Result<Self, OcrError> {
+        // Validate config to prevent degenerate values
+        if config.max_regions_per_request == 0 {
+            return Err(OcrError::InvalidResponse(
+                "max_regions_per_request must be >= 1".to_string()
+            ));
+        }
+        if config.max_concurrent_decodes == 0 {
+            return Err(OcrError::InvalidResponse(
+                "max_concurrent_decodes must be >= 1".to_string()
+            ));
+        }
+        if config.decode_cache_max_size == 0 {
+            return Err(OcrError::InvalidResponse(
+                "decode_cache_max_size must be >= 1".to_string()
+            ));
+        }
+        if config.circuit_breaker_failures == 0 {
+            return Err(OcrError::InvalidResponse(
+                "circuit_breaker_failures must be >= 1".to_string()
+            ));
+        }
+
         let http = Client::builder()
             .timeout(config.timeout())
             .build()
@@ -149,6 +171,10 @@ impl DeepseekOcrClient {
 
                         if attempt > self.config.retry_attempts {
                             error!("Decode batch failed after {} attempts: {}", attempt, e);
+                            // Record duration before failing
+                            METRICS.deepseek_request_duration
+                                .with_label_values(&["decode"])
+                                .observe(start.elapsed().as_secs_f64());
                             // Fail the entire call if any batch fails
                             return Err(e);
                         }
@@ -244,11 +270,17 @@ impl DeepseekOcrClient {
             METRICS.deepseek_requests
                 .with_label_values(&["index", "disabled"])
                 .inc();
+            METRICS.deepseek_request_duration
+                .with_label_values(&["index"])
+                .observe(start.elapsed().as_secs_f64());
             return Err(OcrError::Disabled);
         }
 
         if self.breaker.is_open("index") {
             METRICS.deepseek_circuit_open.with_label_values(&["index"]).inc();
+            METRICS.deepseek_request_duration
+                .with_label_values(&["index"])
+                .observe(start.elapsed().as_secs_f64());
             return Err(OcrError::CircuitOpen("index".to_string()));
         }
 
@@ -273,6 +305,9 @@ impl DeepseekOcrClient {
                 METRICS.deepseek_requests
                     .with_label_values(&["index", "error"])
                     .inc();
+                METRICS.deepseek_request_duration
+                    .with_label_values(&["index"])
+                    .observe(start.elapsed().as_secs_f64());
                 if e.is_timeout() {
                     OcrError::Timeout(e.to_string())
                 } else {
@@ -286,6 +321,9 @@ impl DeepseekOcrClient {
             METRICS.deepseek_requests
                 .with_label_values(&["index", "error"])
                 .inc();
+            METRICS.deepseek_request_duration
+                .with_label_values(&["index"])
+                .observe(start.elapsed().as_secs_f64());
             let error_text = response
                 .text()
                 .await
@@ -299,7 +337,12 @@ impl DeepseekOcrClient {
         let index_response: IndexResponse = response
             .json()
             .await
-            .map_err(|e| OcrError::InvalidResponse(e.to_string()))?;
+            .map_err(|e| {
+                METRICS.deepseek_request_duration
+                    .with_label_values(&["index"])
+                    .observe(start.elapsed().as_secs_f64());
+                OcrError::InvalidResponse(e.to_string())
+            })?;
 
         self.breaker.mark_success("index");
         METRICS.deepseek_requests
@@ -320,6 +363,9 @@ impl DeepseekOcrClient {
             METRICS.deepseek_requests
                 .with_label_values(&["status", "disabled"])
                 .inc();
+            METRICS.deepseek_request_duration
+                .with_label_values(&["status"])
+                .observe(start.elapsed().as_secs_f64());
             return Err(OcrError::Disabled);
         }
 
@@ -338,6 +384,9 @@ impl DeepseekOcrClient {
                 METRICS.deepseek_requests
                     .with_label_values(&["status", "error"])
                     .inc();
+                METRICS.deepseek_request_duration
+                    .with_label_values(&["status"])
+                    .observe(start.elapsed().as_secs_f64());
                 if e.is_timeout() {
                     OcrError::Timeout(e.to_string())
                 } else {
@@ -351,6 +400,9 @@ impl DeepseekOcrClient {
             METRICS.deepseek_requests
                 .with_label_values(&["status", "error"])
                 .inc();
+            METRICS.deepseek_request_duration
+                .with_label_values(&["status"])
+                .observe(start.elapsed().as_secs_f64());
             let error_text = response
                 .text()
                 .await
@@ -366,7 +418,12 @@ impl DeepseekOcrClient {
         let job_response: JobStatusResponse = response
             .json()
             .await
-            .map_err(|e| OcrError::InvalidResponse(e.to_string()))?;
+            .map_err(|e| {
+                METRICS.deepseek_request_duration
+                    .with_label_values(&["status"])
+                    .observe(start.elapsed().as_secs_f64());
+                OcrError::InvalidResponse(e.to_string())
+            })?;
 
         METRICS.deepseek_requests
             .with_label_values(&["status", "success"])
